@@ -301,9 +301,12 @@ export const DynamicIsland = memo(function DynamicIsland() {
     return () => clearInterval(timer);
   }, []);
 
-  // 今日任务 - 使用本地时间
-  const todayStr = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, "0")}-${now.getDate().toString().padStart(2, "0")}`;
+  // 今日日期字符串 - 使用 useMemo 避免重复计算
+  const todayStr = useMemo(() => {
+    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, "0")}-${now.getDate().toString().padStart(2, "0")}`;
+  }, [now.getFullYear(), now.getMonth(), now.getDate()]);
   
+  // 今日任务 - 仅当 tasks 或 todayStr 变化时重新计算
   const todayTasks = useMemo(() => 
     tasks.filter(t => t.due_date === todayStr).sort((a, b) => {
       // DOING 优先，然后按时间排序
@@ -315,9 +318,11 @@ export const DynamicIsland = memo(function DynamicIsland() {
     }),
   [tasks, todayStr]);
 
+  // 当前时间戳，用于任务时间计算
+  const nowTime = now.getTime();
+
   // 当前正在进行的任务（可能多个）
   const activeTasks = useMemo(() => {
-    const nowTime = now.getTime();
     return todayTasks.filter(t => {
       if (t.status === "DONE") return false;
       if (t.status === "DOING") return true;
@@ -328,14 +333,14 @@ export const DynamicIsland = memo(function DynamicIsland() {
       const end = new Date(start.getTime() + duration * 60000);
       return nowTime >= start.getTime() && nowTime <= end.getTime();
     });
-  }, [todayTasks, now]);
+  }, [todayTasks, nowTime]);
 
   // 计算下一个任务（即将开始的）
   const nextTask = useMemo(() => {
     if (activeTasks.length > 0) return null;
     // 找一个今天还没开始，且有计划时间的任务
-    return todayTasks.find(t => t.status === "TODO" && t.scheduled_time && parseScheduledTime(t.scheduled_time)!.getTime() > now.getTime());
-  }, [activeTasks, todayTasks, now]);
+    return todayTasks.find(t => t.status === "TODO" && t.scheduled_time && parseScheduledTime(t.scheduled_time)!.getTime() > nowTime);
+  }, [activeTasks, todayTasks, nowTime]);
 
   // 处理任务点击
   const handleToggleTask = useCallback(async (e: React.MouseEvent, task: Task) => {

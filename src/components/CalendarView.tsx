@@ -3,36 +3,25 @@
  * @description 日历视图 - 月视图 + 日视图
  */
 
-import { useState, useMemo, memo, useCallback, useEffect } from "react";
+import { useState, useMemo, memo, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Plus, Clock, Check, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useTaskActions } from "@/contexts/TaskActionsContext";
 import { useTaskSelection } from "@/contexts/TaskSelectionContext";
-import { formatDate, isToday, isSameDay } from "@/utils/date";
+import { formatDate, isToday, isSameDay, getMonthDays } from "@/utils/date";
 import { groupTasksByDate, getTasksByDate, sortByScheduledTime } from "@/utils/task";
 import type { Task } from "@/lib/tasks";
-
-function getDaysInMonth(year: number, month: number): Date[] {
-  const days: Date[] = [];
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-  const startDayOfWeek = firstDay.getDay();
-  for (let i = startDayOfWeek - 1; i >= 0; i--) days.push(new Date(year, month, -i));
-  for (let i = 1; i <= lastDay.getDate(); i++) days.push(new Date(year, month, i));
-  const remainingDays = 42 - days.length;
-  for (let i = 1; i <= remainingDays; i++) days.push(new Date(year, month + 1, i));
-  return days;
-}
 
 function openQuickCapture() {
   window.dispatchEvent(new CustomEvent("open-quickcapture"));
 }
 
 export const CalendarView = memo(function CalendarView() {
-  // 实时跟踪系统日期（用于判断"今天"）
-  const [systemDate, setSystemDate] = useState(new Date());
+  // 使用 ref 跟踪系统日期字符串，避免状态更新触发重渲染
+  const systemDateRef = useRef(new Date().toDateString());
+  const [, forceUpdate] = useState(0);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const { theme } = useTheme();
@@ -44,21 +33,23 @@ export const CalendarView = memo(function CalendarView() {
   useEffect(() => {
     const checkDate = () => {
       const now = new Date();
-      // 如果日期变了（跨天），更新系统日期
-      if (now.toDateString() !== systemDate.toDateString()) {
-        setSystemDate(now);
+      const nowStr = now.toDateString();
+      // 如果日期变了（跨天），强制更新组件
+      if (nowStr !== systemDateRef.current) {
+        systemDateRef.current = nowStr;
+        forceUpdate(n => n + 1);
       }
     };
     
     // 每分钟检查一次
     const timer = setInterval(checkDate, 60000);
     return () => clearInterval(timer);
-  }, [systemDate]);
+  }, []);
   
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
-  // 将 systemDate 加入依赖，确保跨天时日历能正确更新"今天"标记
-  const days = useMemo(() => getDaysInMonth(year, month), [year, month, systemDate]);
+  // 使用统一的 getMonthDays 工具函数
+  const days = useMemo(() => getMonthDays(year, month), [year, month]);
   const weekDays = ["日", "一", "二", "三", "四", "五", "六"];
   const tasksByDate = useMemo(() => groupTasksByDate(tasks), [tasks]);
   const dayTasks = useMemo(() => sortByScheduledTime(getTasksByDate(tasks, formatDate(selectedDate), false)), [tasks, selectedDate]);

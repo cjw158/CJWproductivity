@@ -1,4 +1,4 @@
-import React, { useRef, useState, forwardRef, useEffect } from "react";
+import React, { useRef, useState, forwardRef, useEffect, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -14,7 +14,7 @@ interface SpotlightCardProps extends React.HTMLAttributes<HTMLDivElement> {
   enableTilt?: boolean; // 新增开关
 }
 
-export function SpotlightCard({
+export const SpotlightCard = React.memo(function SpotlightCard({
   children,
   className,
   from = "rgba(255,255,255,0.2)",
@@ -27,7 +27,7 @@ export function SpotlightCard({
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [isHovered, setIsHovered] = useState(false);
 
-  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -39,18 +39,23 @@ export function SpotlightCard({
       const rotateX = ((y - rect.height / 2) / rect.height) * -20;
       containerRef.current.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(1.05)`;
     }
-  }
+  }, [enableTilt]);
 
-  function handleMouseLeave() {
+  const handleMouseLeave = useCallback(() => {
     setIsHovered(false);
     if (containerRef.current) {
       containerRef.current.style.transform = 'perspective(1000px) rotateX(0deg) rotateY(0deg) scale(1)';
     }
-  }
+  }, []);
 
-  function handleMouseEnter() {
+  const handleMouseEnter = useCallback(() => {
     setIsHovered(true);
-  }
+  }, []);
+
+  // 缓存背景样式
+  const spotlightStyle = useMemo(() => ({
+    background: `radial-gradient(400px circle at ${mousePosition.x}px ${mousePosition.y}px, ${from}, ${via}, ${to})`,
+  }), [mousePosition.x, mousePosition.y, from, via, to]);
 
   return (
     <div
@@ -72,9 +77,7 @@ export function SpotlightCard({
       {isHovered && (
         <div
           className="pointer-events-none absolute -inset-px rounded-xl"
-          style={{
-            background: `radial-gradient(400px circle at ${mousePosition.x}px ${mousePosition.y}px, ${from}, ${via}, ${to})`,
-          }}
+          style={spotlightStyle}
         />
       )}
       <div className="relative h-full">
@@ -82,7 +85,7 @@ export function SpotlightCard({
       </div>
     </div>
   );
-}
+});
 
 // =========================================
 // 2. Glass Panel (高级毛玻璃容器)
@@ -281,7 +284,8 @@ export function GridBeam({ className, width = 20, height = 20, x = 0, y = 0 }: G
   );
 }
 
-function Beam({ duration, delay, width, height, horizontal = false }: { duration: number; delay: number; width: number; height: number; horizontal?: boolean }) {
+// 使用 memo 和 useMemo 优化 Beam 组件，避免不必要的重渲染
+const Beam = React.memo(function Beam({ duration, delay, width, height, horizontal = false }: { duration: number; delay: number; width: number; height: number; horizontal?: boolean }) {
   const [dimension, setDimension] = useState({ 
     width: typeof window !== 'undefined' ? window.innerWidth : 1200, 
     height: typeof window !== 'undefined' ? window.innerHeight : 800 
@@ -302,40 +306,46 @@ function Beam({ duration, delay, width, height, horizontal = false }: { duration
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // 计算路径 - 确保覆盖全屏
-  const maxSteps = horizontal ? Math.ceil(dimension.height / height) : Math.ceil(dimension.width / width);
-  const rowOrCol = Math.floor(Math.random() * maxSteps);
-  const offset = rowOrCol * (horizontal ? height : width) + (horizontal ? height/2 : width/2);
-  
-  // 增加额外的长度，确保从屏幕外完全穿过
-  const d = horizontal 
-    ? `M -500 ${offset} L ${dimension.width + 500} ${offset}`
-    : `M ${offset} -500 L ${offset} ${dimension.height + 500}`;
+  // 使用 useMemo 缓存路径计算，避免每次渲染重新计算
+  const { d, repeatDelay } = React.useMemo(() => {
+    const maxSteps = horizontal ? Math.ceil(dimension.height / height) : Math.ceil(dimension.width / width);
+    const rowOrCol = Math.floor(Math.random() * maxSteps);
+    const offset = rowOrCol * (horizontal ? height : width) + (horizontal ? height/2 : width/2);
+    
+    const path = horizontal 
+      ? `M -500 ${offset} L ${dimension.width + 500} ${offset}`
+      : `M ${offset} -500 L ${offset} ${dimension.height + 500}`;
+    
+    return { 
+      d: path, 
+      repeatDelay: Math.random() * 2 + 1 // 随机间隔 1-3秒
+    };
+  }, [dimension.width, dimension.height, width, height, horizontal]);
 
   return (
     <motion.path
       d={d}
-      stroke="#00FFFF" // 直接使用亮青色，不依赖渐变定义
+      stroke="#00FFFF"
       strokeWidth="3" 
       strokeLinecap="round"
       fill="none"
       initial={{ pathLength: 0, opacity: 0, pathOffset: 0 }}
       animate={{ 
-        pathLength: [0, 0.4, 0], // 缩短光束长度，使其更像子弹
+        pathLength: [0, 0.4, 0],
         opacity: [0, 1, 0],
         pathOffset: [0, 1] 
       }}
       transition={{
-        duration: duration * 1.5, // 稍微慢一点，看清运动
+        duration: duration * 1.5,
         delay,
         repeat: Infinity,
         ease: "linear",
-        repeatDelay: Math.random() * 2 + 1 // 随机间隔 1-3秒
+        repeatDelay
       }}
-      style={{ filter: "drop-shadow(0 0 4px #00FFFF)" }} // 添加发光滤镜
+      style={{ filter: "drop-shadow(0 0 4px #00FFFF)" }}
     />
   );
-}
+});
 
 // =========================================
 // 6. Fluid Text (流光文字)

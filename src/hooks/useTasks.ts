@@ -69,8 +69,16 @@ export function useCreateTask() {
 
   return useMutation({
     mutationFn: (input: CreateTaskInput) => createTask(input),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
+    onSuccess: (newTask) => {
+      // 乐观更新：直接更新缓存而不是 invalidate
+      queryClient.setQueryData<Task[]>(TASKS_QUERY_KEY, (old) => 
+        old ? [newTask, ...old] : [newTask]
+      );
+      queryClient.setQueryData<Task[]>([...TASKS_QUERY_KEY, "all"], (old) => 
+        old ? [newTask, ...old] : [newTask]
+      );
+      // 刷新相关查询以确保一致性
+      queryClient.invalidateQueries({ queryKey: KANBAN_QUERY_KEY });
     },
   });
 }
@@ -83,8 +91,15 @@ export function useUpdateTask() {
   return useMutation({
     mutationFn: ({ id, input }: { id: number; input: UpdateTaskInput }) =>
       updateTask(id, input),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
+    onSuccess: (updatedTask) => {
+      // 乐观更新：直接更新缓存
+      const updateTaskInCache = (tasks: Task[] | undefined) => 
+        tasks?.map(t => t.id === updatedTask.id ? updatedTask : t);
+      
+      queryClient.setQueryData<Task[]>(TASKS_QUERY_KEY, updateTaskInCache);
+      queryClient.setQueryData<Task[]>([...TASKS_QUERY_KEY, "all"], updateTaskInCache);
+      // 刷新看板视图
+      queryClient.invalidateQueries({ queryKey: KANBAN_QUERY_KEY });
     },
   });
 }
@@ -101,8 +116,9 @@ export function useMoveTaskStatus() {
       await queryClient.cancelQueries({ queryKey: TASKS_QUERY_KEY });
 
       const previousKanban = queryClient.getQueryData<Record<TaskStatus, Task[]>>(KANBAN_QUERY_KEY);
+      const previousTasks = queryClient.getQueryData<Task[]>(TASKS_QUERY_KEY);
 
-      // Optimistic update
+      // Optimistic update - 同时更新 Kanban 和 Tasks 缓存
       if (previousKanban) {
         const task = Object.values(previousKanban)
           .flat()
@@ -110,22 +126,34 @@ export function useMoveTaskStatus() {
         
         if (task) {
           const oldStatus = task.status;
+          const updatedTask = { ...task, status, completed_at: status === "DONE" ? new Date().toISOString() : null };
           const newKanban = { ...previousKanban };
           newKanban[oldStatus] = newKanban[oldStatus].filter((t) => t.id !== id);
-          newKanban[status] = [...newKanban[status], { ...task, status }];
+          newKanban[status] = [...newKanban[status], updatedTask];
           queryClient.setQueryData(KANBAN_QUERY_KEY, newKanban);
+          
+          // 同步更新 tasks 缓存
+          if (previousTasks) {
+            queryClient.setQueryData<Task[]>(TASKS_QUERY_KEY, 
+              previousTasks.map(t => t.id === id ? updatedTask : t)
+            );
+          }
         }
       }
 
-      return { previousKanban };
+      return { previousKanban, previousTasks };
     },
     onError: (_err, _variables, context) => {
       if (context?.previousKanban) {
         queryClient.setQueryData(KANBAN_QUERY_KEY, context.previousKanban);
       }
+      if (context?.previousTasks) {
+        queryClient.setQueryData(TASKS_QUERY_KEY, context.previousTasks);
+      }
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
+      // 只刷新 kanban，避免不必要的重新获取
+      queryClient.invalidateQueries({ queryKey: KANBAN_QUERY_KEY });
     },
   });
 }
@@ -137,8 +165,30 @@ export function useDeleteTask() {
 
   return useMutation({
     mutationFn: (id: number) => deleteTask(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: TASKS_QUERY_KEY });
+      
+      const previousTasks = queryClient.getQueryData<Task[]>(TASKS_QUERY_KEY);
+      
+      // 乐观更新：立即从缓存中移除
+      if (previousTasks) {
+        queryClient.setQueryData<Task[]>(TASKS_QUERY_KEY, 
+          previousTasks.filter(t => t.id !== id)
+        );
+        queryClient.setQueryData<Task[]>([...TASKS_QUERY_KEY, "all"], 
+          previousTasks.filter(t => t.id !== id)
+        );
+      }
+      
+      return { previousTasks };
+    },
+    onError: (_err, _id, context) => {
+      if (context?.previousTasks) {
+        queryClient.setQueryData(TASKS_QUERY_KEY, context.previousTasks);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: KANBAN_QUERY_KEY });
     },
   });
 }
@@ -154,6 +204,7 @@ export function useCompleteTask() {
       await queryClient.cancelQueries({ queryKey: TASKS_QUERY_KEY });
 
       const previousKanban = queryClient.getQueryData<Record<TaskStatus, Task[]>>(KANBAN_QUERY_KEY);
+      const previousTasks = queryClient.getQueryData<Task[]>(TASKS_QUERY_KEY);
 
       if (previousKanban) {
         const task = Object.values(previousKanban)
@@ -162,23 +213,33 @@ export function useCompleteTask() {
         
         if (task) {
           const oldStatus = task.status;
+          const completedTask = { ...task, status: "DONE" as TaskStatus, completed_at: new Date().toISOString() };
           const newKanban = { ...previousKanban };
           newKanban[oldStatus] = newKanban[oldStatus].filter((t) => t.id !== id);
-          newKanban.DONE = [...newKanban.DONE, { ...task, status: "DONE" as TaskStatus }];
+          newKanban.DONE = [...newKanban.DONE, completedTask];
           queryClient.setQueryData(KANBAN_QUERY_KEY, newKanban);
+          
+          // 同步更新 tasks 缓存
+          if (previousTasks) {
+            queryClient.setQueryData<Task[]>(TASKS_QUERY_KEY,
+              previousTasks.map(t => t.id === id ? completedTask : t)
+            );
+          }
         }
       }
 
-      return { previousKanban };
+      return { previousKanban, previousTasks };
     },
     onError: (_err, _variables, context) => {
       if (context?.previousKanban) {
         queryClient.setQueryData(KANBAN_QUERY_KEY, context.previousKanban);
       }
+      if (context?.previousTasks) {
+        queryClient.setQueryData(TASKS_QUERY_KEY, context.previousTasks);
+      }
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: KANBAN_QUERY_KEY });
     },
   });
 }
-
