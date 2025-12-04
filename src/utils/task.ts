@@ -97,13 +97,13 @@ export function sortByScheduledTime(tasks: Task[]): Task[] {
  * 获取指定日期的任务 - 优化版：单次遍历同时过滤和收集
  * @param tasks - 任务数组
  * @param dateStr - 日期字符串 YYYY-MM-DD
- * @param excludeDone - 是否排除已完成（默认 false 以包含所有任务）
+ * @param excludeDone - 是否排除已完成（默认 true）
  * @returns 过滤后的任务数组
  */
 export function getTasksByDate(
   tasks: Task[],
   dateStr: string,
-  excludeDone = false
+  excludeDone = true
 ): Task[] {
   const result: Task[] = [];
   for (const task of tasks) {
