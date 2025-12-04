@@ -156,6 +156,33 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
             "prose-img:rounded-xl prose-img:shadow-md prose-img:my-4 prose-img:max-h-[500px] prose-img:object-contain"
           ),
         },
+        // 处理粘贴事件，支持粘贴图片
+        handlePaste: (view, event) => {
+          const items = event.clipboardData?.items;
+          if (!items) return false;
+          
+          for (const item of items) {
+            if (item.type.startsWith("image/")) {
+              event.preventDefault();
+              const file = item.getAsFile();
+              if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                  const src = e.target?.result as string;
+                  if (src && view.state.selection) {
+                    const { from } = view.state.selection;
+                    const node = view.state.schema.nodes.image.create({ src });
+                    const tr = view.state.tr.insert(from, node);
+                    view.dispatch(tr);
+                  }
+                };
+                reader.readAsDataURL(file);
+                return true;
+              }
+            }
+          }
+          return false;
+        },
       },
     });
 
