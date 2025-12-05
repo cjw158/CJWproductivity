@@ -15,6 +15,59 @@ interface HeaderProps {
   onOpenSettings: () => void;
 }
 
+// 将时钟组件独立出来，避免整个 Header 因时钟更新而重渲染
+const ClockDisplay = memo(function ClockDisplay({ isDark }: { isDark: boolean }) {
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className={cn(
+      "ml-2 text-xs font-medium tabular-nums opacity-60",
+      isDark ? "text-white" : "text-gray-600"
+    )}>
+      {currentTime.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+    </div>
+  );
+});
+
+// 时间进度条组件，独立更新避免影响其他组件
+const TimeProgressBar = memo(function TimeProgressBar({ isDark }: { isDark: boolean }) {
+  const [progress, setProgress] = useState(() => {
+    const now = new Date();
+    return (now.getHours() * 60 + now.getMinutes()) / (24 * 60) * 100;
+  });
+
+  useEffect(() => {
+    const updateProgress = () => {
+      const now = new Date();
+      setProgress((now.getHours() * 60 + now.getMinutes()) / (24 * 60) * 100);
+    };
+    // 每分钟更新一次进度条就足够了
+    const timer = setInterval(updateProgress, 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="absolute bottom-0 left-0 w-full h-[1px] bg-transparent overflow-hidden">
+      <motion.div 
+        className={cn(
+          "h-full",
+          isDark ? "bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500" : "bg-blue-500"
+        )}
+        style={{ 
+          width: `${progress}%`,
+          opacity: 0.5
+        }}
+        transition={{ duration: 60, ease: "linear" }}
+      />
+    </div>
+  );
+});
+
 export const Header = memo(function Header({ activeTab, onTabChange, onOpenSettings }: HeaderProps) {
   useEnergyMode(); // Keep hook connected
   useTheme(); // Keep context connected
@@ -43,15 +96,8 @@ export const Header = memo(function Header({ activeTab, onTabChange, onOpenSetti
     logger.debug("[Header] Theme toggled to:", newTheme);
   }, [localDark]);
   
-  // 实时时钟
-  const [currentTime, setCurrentTime] = useState(new Date());
   // 灵动岛状态
   const [islandActive, setIslandActive] = useState(false);
-
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   // 检查灵动岛初始状态
   useEffect(() => {
@@ -178,29 +224,12 @@ export const Header = memo(function Header({ activeTab, onTabChange, onOpenSetti
           <Settings className="w-5 h-5" />
         </button>
 
-        {/* 时间显示移到最右侧 */}
-        <div className={cn(
-          "ml-2 text-xs font-medium tabular-nums opacity-60",
-          isDark ? "text-white" : "text-gray-600"
-        )}>
-          {currentTime.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
-        </div>
+        {/* 时间显示 - 使用独立组件避免 Header 重渲染 */}
+        <ClockDisplay isDark={isDark} />
       </div>
 
-      {/* 底部时间进度条 */}
-      <div className="absolute bottom-0 left-0 w-full h-[1px] bg-transparent overflow-hidden">
-        <motion.div 
-          className={cn(
-            "h-full",
-            isDark ? "bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500" : "bg-blue-500"
-          )}
-          style={{ 
-            width: `${(currentTime.getHours() * 60 + currentTime.getMinutes()) / (24 * 60) * 100}%`,
-            opacity: 0.5
-          }}
-          transition={{ duration: 60, ease: "linear" }}
-        />
-      </div>
+      {/* 底部时间进度条 - 使用独立组件，每分钟更新一次 */}
+      <TimeProgressBar isDark={isDark} />
     </header>
   );
 });

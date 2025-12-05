@@ -12,7 +12,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, FileText, Plus, Zap } from "lucide-react";
+import { ChevronDown, FileText, Plus, Zap, Image as ImageIcon } from "lucide-react";
 import { formatRemaining, getTaskRemaining, stripHtml, parseScheduledTime, extractH1Title } from "@/utils";
 import { ISLAND_CONFIG } from "@/config/constants";
 import { logger } from "@/lib/logger";
@@ -118,6 +118,7 @@ export const DynamicIsland = memo(function DynamicIsland() {
   const [isVisible, setIsVisible] = useState(false);
   const [isCaptureMode, setIsCaptureMode] = useState(false);
   const [captureText, setCaptureText] = useState("");
+  const [captureImages, setCaptureImages] = useState<string[]>([]); // 存储粘贴的图片 Base64
   const [isSaving, setIsSaving] = useState(false);
   const [showNoteSelector, setShowNoteSelector] = useState(false);
   const [noteMode, setNoteMode] = useState<"append" | "new" | "select">("append");
@@ -185,6 +186,7 @@ export const DynamicIsland = memo(function DynamicIsland() {
       setIsCaptureMode(true);
       setIsExpanded(false);
       setCaptureText("");
+      setCaptureImages([]); // 清空粘贴的图片
       setShowNoteSelector(false);
       setNoteMode("append");
       setSelectedNoteId(null);
@@ -213,13 +215,19 @@ export const DynamicIsland = memo(function DynamicIsland() {
 
   // 保存笔记
   const handleSave = useCallback(async () => {
-    if (!captureText.trim() || isSaving) return;
+    // 允许只有图片没有文本的情况
+    if ((!captureText.trim() && captureImages.length === 0) || isSaving) return;
     
     setIsSaving(true);
     try {
       const text = captureText.trim();
-      // 将纯文本转为 HTML 段落格式
-      const htmlContent = `<p>${text}</p>`;
+      // 将纯文本转为 HTML 段落格式，并添加图片
+      let htmlContent = text ? `<p>${text}</p>` : "";
+      
+      // 添加粘贴的图片
+      for (const imgSrc of captureImages) {
+        htmlContent += `<img src="${imgSrc}" alt="粘贴图片" />`;
+      }
       
       if (noteMode === "new") {
         // 创建新笔记
@@ -253,6 +261,7 @@ export const DynamicIsland = memo(function DynamicIsland() {
       setTimeout(() => {
         setIsCaptureMode(false);
         setCaptureText("");
+        setCaptureImages([]);
         setIsSaving(false);
         setShowNoteSelector(false);
       }, 200);
@@ -260,7 +269,7 @@ export const DynamicIsland = memo(function DynamicIsland() {
       console.error("Failed to save note:", error);
       setIsSaving(false);
     }
-  }, [captureText, isSaving, noteMode, selectedNoteId, notes, latestNote, createNote, updateNote, queryClient]);
+  }, [captureText, captureImages, isSaving, noteMode, selectedNoteId, notes, latestNote, createNote, updateNote, queryClient]);
 
   // 处理键盘事件 - Shift+Enter 保存，Enter 换行
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -273,9 +282,39 @@ export const DynamicIsland = memo(function DynamicIsland() {
       } else {
         setIsCaptureMode(false);
         setCaptureText("");
+        setCaptureImages([]);
       }
     }
   }, [handleSave, showNoteSelector]);
+
+  // 处理粘贴事件 - 支持粘贴图片插入笔记
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const src = event.target?.result as string;
+            if (src) {
+              setCaptureImages(prev => [...prev, src]);
+            }
+          };
+          reader.readAsDataURL(file);
+        }
+        return; // 阻止继续处理
+      }
+    }
+  }, []);
+
+  // 删除单个粘贴的图片
+  const removeImage = useCallback((index: number) => {
+    setCaptureImages(prev => prev.filter((_, i) => i !== index));
+  }, []);
 
   // 计算文本行数
   const lineCount = useMemo(() => {
@@ -301,9 +340,12 @@ export const DynamicIsland = memo(function DynamicIsland() {
     return () => clearInterval(timer);
   }, []);
 
-  // 今日任务 - 使用本地时间
-  const todayStr = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, "0")}-${now.getDate().toString().padStart(2, "0")}`;
+  // 今日日期字符串 - 使用 useMemo 避免重复计算
+  const todayStr = useMemo(() => {
+    return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, "0")}-${now.getDate().toString().padStart(2, "0")}`;
+  }, [now.getFullYear(), now.getMonth(), now.getDate()]);
   
+  // 今日任务 - 仅当 tasks 或 todayStr 变化时重新计算
   const todayTasks = useMemo(() => 
     tasks.filter(t => t.due_date === todayStr).sort((a, b) => {
       // DOING 优先，然后按时间排序
@@ -315,9 +357,11 @@ export const DynamicIsland = memo(function DynamicIsland() {
     }),
   [tasks, todayStr]);
 
+  // 当前时间戳，用于任务时间计算
+  const nowTime = now.getTime();
+
   // 当前正在进行的任务（可能多个）
   const activeTasks = useMemo(() => {
-    const nowTime = now.getTime();
     return todayTasks.filter(t => {
       if (t.status === "DONE") return false;
       if (t.status === "DOING") return true;
@@ -328,14 +372,14 @@ export const DynamicIsland = memo(function DynamicIsland() {
       const end = new Date(start.getTime() + duration * 60000);
       return nowTime >= start.getTime() && nowTime <= end.getTime();
     });
-  }, [todayTasks, now]);
+  }, [todayTasks, nowTime]);
 
   // 计算下一个任务（即将开始的）
   const nextTask = useMemo(() => {
     if (activeTasks.length > 0) return null;
     // 找一个今天还没开始，且有计划时间的任务
-    return todayTasks.find(t => t.status === "TODO" && t.scheduled_time && parseScheduledTime(t.scheduled_time)!.getTime() > now.getTime());
-  }, [activeTasks, todayTasks, now]);
+    return todayTasks.find(t => t.status === "TODO" && t.scheduled_time && parseScheduledTime(t.scheduled_time)!.getTime() > nowTime);
+  }, [activeTasks, todayTasks, nowTime]);
 
   // 处理任务点击
   const handleToggleTask = useCallback(async (e: React.MouseEvent, task: Task) => {
@@ -453,7 +497,9 @@ export const DynamicIsland = memo(function DynamicIsland() {
           const baseHeight = 52;
           const lineHeight = 22;
           const textHeight = baseHeight + (lineCount - 1) * lineHeight;
-          height = showNoteSelector ? Math.max(textHeight, CAPTURE_HEIGHT) + 128 : textHeight;
+          // 如果有粘贴的图片，增加高度用于显示图片预览
+          const imagePreviewHeight = captureImages.length > 0 ? 60 : 0;
+          height = showNoteSelector ? Math.max(textHeight, CAPTURE_HEIGHT) + 128 + imagePreviewHeight : textHeight + imagePreviewHeight;
         } else if (isExpanded) {
           width = EXPANDED_WIDTH;
           height = expandedHeight;
@@ -468,7 +514,7 @@ export const DynamicIsland = memo(function DynamicIsland() {
       }
     };
     resize();
-  }, [isExpanded, collapsedWidth, expandedHeight, isCaptureMode, captureWidth, showNoteSelector, lineCount]);
+  }, [isExpanded, collapsedWidth, expandedHeight, isCaptureMode, captureWidth, showNoteSelector, lineCount, captureImages.length]);
 
   if (!isVisible) return null;
 
@@ -560,7 +606,7 @@ export const DynamicIsland = memo(function DynamicIsland() {
                   width: 28,
                   height: 28,
                   borderRadius: 8,
-                  background: isSaving ? colors.success : "#FBBF24",
+                  background: isSaving ? colors.success : captureImages.length > 0 ? "#10B981" : "#FBBF24",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -571,6 +617,8 @@ export const DynamicIsland = memo(function DynamicIsland() {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                     <path d="M5 12l5 5L20 7" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
+                ) : captureImages.length > 0 ? (
+                  <ImageIcon size={14} color="#fff" />
                 ) : (
                   <Zap size={14} color="#fff" fill="#fff" />
                 )}
@@ -582,12 +630,15 @@ export const DynamicIsland = memo(function DynamicIsland() {
                 value={captureText}
                 onChange={(e) => setCaptureText(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={
-                  noteMode === "new" 
-                    ? "记录新想法... (Shift+Enter 保存)" 
-                    : latestNoteTitle 
-                      ? `追加到「${latestNoteTitle}...」(Shift+Enter 保存)` 
-                      : "记录想法... (Shift+Enter 保存)"
+                  captureImages.length > 0
+                    ? "添加图片描述... (Shift+Enter 保存)"
+                    : noteMode === "new" 
+                      ? "记录新想法... (Ctrl+V 粘贴图片)" 
+                      : latestNoteTitle 
+                        ? `追加到「${latestNoteTitle}...」(Ctrl+V 粘贴图片)` 
+                        : "记录想法... (Ctrl+V 粘贴图片)"
                 }
                 disabled={isSaving}
                 rows={lineCount}
@@ -625,6 +676,61 @@ export const DynamicIsland = memo(function DynamicIsland() {
                 <ChevronDown size={12} style={{ transform: showNoteSelector ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
               </button>
             </div>
+
+            {/* 已粘贴的图片预览 */}
+            {captureImages.length > 0 && (
+              <div style={{ 
+                display: "flex", 
+                gap: 6, 
+                marginTop: 8,
+                flexWrap: "wrap",
+              }}>
+                {captureImages.map((src, index) => (
+                  <div 
+                    key={index}
+                    style={{ 
+                      position: "relative",
+                      width: 48,
+                      height: 48,
+                      borderRadius: 6,
+                      overflow: "hidden",
+                      border: `1px solid ${colors.border}`,
+                    }}
+                  >
+                    <img 
+                      src={src} 
+                      alt={`粘贴图片 ${index + 1}`}
+                      style={{ 
+                        width: "100%", 
+                        height: "100%", 
+                        objectFit: "cover",
+                      }}
+                    />
+                    <button
+                      onClick={() => removeImage(index)}
+                      style={{
+                        position: "absolute",
+                        top: 2,
+                        right: 2,
+                        width: 16,
+                        height: 16,
+                        borderRadius: "50%",
+                        background: "rgba(0,0,0,0.6)",
+                        border: "none",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "#fff",
+                        fontSize: 10,
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* 下拉选择器 */}
             <AnimatePresence>
