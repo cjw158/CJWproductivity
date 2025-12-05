@@ -37,11 +37,10 @@ export interface UpdateNoteInput {
 
 // ============ Mock Data ============
 
+// 🟡 优化：仅保留 mock 数据用于浏览器环境回退
 const mockFolders: Folder[] = [
   { id: "all", name: "全部笔记", type: "system", icon: "Archive" },
   { id: "trash", name: "最近删除", type: "system", icon: "Trash2" },
-  { id: "personal", name: "个人思考", type: "user", icon: "Folder" },
-  { id: "work", name: "工作记录", type: "user", icon: "Folder" },
 ];
 
 const mockNotes: Note[] = [
@@ -156,9 +155,49 @@ async function getDbOrMock() {
 
 // ============ Operations ============
 
+/**
+ * 🔴 关键修复：从数据库获取文件夹列表（持久化）
+ * 确保用户创建的文件夹在应用重启后能正确恢复
+ */
 export async function getFolders(): Promise<Folder[]> {
-  // Mock folders for now
-  return mockFolders;
+  const db = await getDbOrMock();
+  
+  // 浏览器环境回退到 mock 数据
+  if (db === mockDb) {
+    return mockFolders;
+  }
+
+  // 从数据库读取文件夹
+  try {
+    const rows = await db.select<Array<{ id: string; name: string; icon: string; type: string }>>(
+      "SELECT id, name, icon, type FROM folders ORDER BY type DESC, created_at ASC"
+    );
+    
+    // 确保系统文件夹始终在最前面
+    const folders: Folder[] = rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      icon: row.icon || "Folder",
+      type: row.type as "system" | "user",
+    }));
+
+    // 如果数据库为空，返回默认系统文件夹（理论上不会发生，因为初始化时已插入）
+    if (folders.length === 0) {
+      return [
+        { id: "all", name: "全部笔记", type: "system", icon: "Archive" },
+        { id: "trash", name: "最近删除", type: "system", icon: "Trash2" },
+      ];
+    }
+
+    return folders;
+  } catch (error) {
+    logger.error("[notes] Failed to get folders:", error);
+    // 出错时返回最基本的系统文件夹
+    return [
+      { id: "all", name: "全部笔记", type: "system", icon: "Archive" },
+      { id: "trash", name: "最近删除", type: "system", icon: "Trash2" },
+    ];
+  }
 }
 
 export async function getNotes(folderId: string = "all"): Promise<Note[]> {
@@ -294,7 +333,13 @@ export async function deleteNote(id: number): Promise<void> {
   await db.execute("DELETE FROM notes WHERE id = ?", [id]);
 }
 
+/**
+ * 🔴 关键修复：创建文件夹并持久化到数据库
+ * 确保用户创建的文件夹在应用重启后能正确恢复
+ */
 export async function createFolder(name: string): Promise<Folder> {
+  const db = await getDbOrMock();
+  
   // 生成唯一 ID
   const id = `folder_${Date.now()}`;
   const newFolder: Folder = {
@@ -303,29 +348,85 @@ export async function createFolder(name: string): Promise<Folder> {
     type: "user",
     icon: "Folder",
   };
-  mockFolders.push(newFolder);
-  return newFolder;
+  
+  // 浏览器环境回退到内存
+  if (db === mockDb) {
+    mockFolders.push(newFolder);
+    return newFolder;
+  }
+
+  // 持久化到数据库
+  try {
+    await db.execute(
+      `INSERT INTO folders (id, name, icon, type, created_at) VALUES (?, ?, ?, ?, datetime('now', 'localtime'))`,
+      [id, name, "Folder", "user"]
+    );
+    logger.debug("[notes] Folder created:", id, name);
+    return newFolder;
+  } catch (error) {
+    logger.error("[notes] Failed to create folder:", error);
+    throw new Error("创建文件夹失败");
+  }
 }
 
+/**
+ * 🔴 关键修复：删除文件夹并从数据库中移除
+ */
 export async function deleteFolder(folderId: string): Promise<void> {
-  // 只能删除用户文件夹
-  const folder = mockFolders.find(f => f.id === folderId);
-  if (!folder || folder.type === "system") {
-    throw new Error("系统文件夹不可删除");
-  }
+  const db = await getDbOrMock();
   
-  // 删除文件夹内的所有笔记
-  const notesToDelete = mockNotes.filter(n => n.folder_id === folderId);
-  notesToDelete.forEach(note => {
-    const index = mockNotes.findIndex(n => n.id === note.id);
-    if (index !== -1) {
-      mockNotes.splice(index, 1);
+  // 浏览器环境回退
+  if (db === mockDb) {
+    const folder = mockFolders.find(f => f.id === folderId);
+    if (!folder || folder.type === "system") {
+      throw new Error("系统文件夹不可删除");
     }
-  });
-  
-  // 删除文件夹
-  const folderIndex = mockFolders.findIndex(f => f.id === folderId);
-  if (folderIndex !== -1) {
-    mockFolders.splice(folderIndex, 1);
+    
+    // 删除文件夹内的所有笔记
+    const notesToDelete = mockNotes.filter(n => n.folder_id === folderId);
+    notesToDelete.forEach(note => {
+      const index = mockNotes.findIndex(n => n.id === note.id);
+      if (index !== -1) {
+        mockNotes.splice(index, 1);
+      }
+    });
+    
+    // 删除文件夹
+    const folderIndex = mockFolders.findIndex(f => f.id === folderId);
+    if (folderIndex !== -1) {
+      mockFolders.splice(folderIndex, 1);
+    }
+    return;
+  }
+
+  // 数据库操作
+  try {
+    // 检查是否为系统文件夹
+    const folderRows = await db.select<Array<{ type: string }>>(
+      "SELECT type FROM folders WHERE id = ?",
+      [folderId]
+    );
+    
+    if (folderRows.length === 0) {
+      throw new Error("文件夹不存在");
+    }
+    
+    if (folderRows[0].type === "system") {
+      throw new Error("系统文件夹不可删除");
+    }
+    
+    // 将该文件夹下的笔记移动到"全部笔记"或删除
+    // 这里选择将笔记移动到 all 文件夹，保护用户数据
+    await db.execute(
+      "UPDATE notes SET folder_id = 'all' WHERE folder_id = ?",
+      [folderId]
+    );
+    
+    // 删除文件夹
+    await db.execute("DELETE FROM folders WHERE id = ?", [folderId]);
+    logger.debug("[notes] Folder deleted:", folderId);
+  } catch (error) {
+    logger.error("[notes] Failed to delete folder:", error);
+    throw error;
   }
 }
