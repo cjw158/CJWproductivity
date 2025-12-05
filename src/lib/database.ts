@@ -117,7 +117,7 @@ async function initializeDatabase(): Promise<void> {
       name TEXT NOT NULL,
       icon TEXT DEFAULT 'Folder',
       type TEXT DEFAULT 'user',
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
   `);
 
