@@ -110,6 +110,24 @@ async function initializeDatabase(): Promise<void> {
     );
   `);
 
+  // 🔴 关键修复：创建 Folders 表（笔记文件夹持久化）
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS folders (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      icon TEXT DEFAULT 'Folder',
+      type TEXT DEFAULT 'user',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+
+  // 初始化系统文件夹（如果不存在）
+  await db.execute(`
+    INSERT OR IGNORE INTO folders (id, name, icon, type) VALUES 
+      ('all', '全部笔记', 'Archive', 'system'),
+      ('trash', '最近删除', 'Trash2', 'system');
+  `);
+
   // 数据库迁移 - 添加缺失的列
   try {
     await db.execute(`ALTER TABLE tasks ADD COLUMN due_date TEXT;`);
@@ -128,6 +146,7 @@ async function initializeDatabase(): Promise<void> {
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);`);
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_kr_plan ON key_results(plan_id);`);
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_notes_folder ON notes(folder_id);`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_folders_type ON folders(type);`);
     
   // 初始化设置
   await db.execute(`

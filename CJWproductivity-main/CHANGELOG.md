@@ -4,87 +4,97 @@
 
 ## [未发布]
 
-### 2024-12-05 - 灵动岛截图功能 & NSIS 安装器优化
+### 2024-12-05 - 架构优化与关键Bug修复
 
-#### ✨ 新增
-- **灵动岛截图功能** - 一键截图自动粘贴
-  - 点击截图按钮 → 隐藏灵动岛 → 启动 Windows 截图工具
-  - 截图完成后自动从剪贴板读取图片
-  - 图片自动显示在快速捕获输入框
-  - 使用浏览器 Clipboard API 实现跨格式兼容
+#### 🔴 红色危重区修复 (Critical)
 
-#### 🎨 优化
-- **灵动岛动画优化** - 移除 blur 滤镜动画，避免负值警告
-- **代码性能优化**
-  - `measureTextWidth` 函数缓存 canvas 实例，避免重复创建
-  - `todayStr` 日期计算使用 `useMemo` 按天缓存
-  - `handleScreenshot` 函数简化为链式 Promise
-  - `handleMouseDown` 拖动处理简化为单行
+##### 问题1：功能切换时前后端状态不匹配
 
-#### 📦 安装器专业化
-- **NSIS 安装器全面升级**
-  - 自定义安装钩子：桌面快捷方式、开始菜单、注册表增强
-  - 双语许可协议（中英文）
-  - LZMA 压缩优化安装包体积
-  - 卸载时询问是否删除用户数据
-  - 完整的"程序和功能"信息展示
+**问题描述：**
+- 切换功能时（如从待办切换到笔记），任务相关的右键菜单和批量操作栏仍然激活
+- 用户在笔记界面可能点击到属于待办功能的按钮
+- 严重影响用户体验和软件稳定性
 
-#### 📁 新增文件
-- `src-tauri/windows/hooks.nsh` - NSIS 安装器自定义钩子
+**修复方案：**
+1. 在 `App.tsx` 中，切换Tab时主动清除任务选择状态和右键菜单
+2. 将 `TaskContextMenu` 和 `BatchActionsBar` 组件的渲染条件改为仅在任务视图激活时渲染
+3. 引入 `useTaskSelection` hook 获取 `clearSelection` 和 `closeContextMenu` 方法
 
-#### 📁 修改文件
-- `src/components/DynamicIsland.tsx` - 添加截图功能、优化性能
-- `src-tauri/tauri.conf.json` - NSIS 专业配置
-- `src-tauri/nsis/LICENSE.txt` - 双语许可协议
-- `src-tauri/capabilities/default.json` - 添加 shell、clipboard 权限
-- `src/i18n/*.ts` - 添加截图相关翻译
+**修改代码：**
+```typescript
+// App.tsx - 切换Tab时清除状态
+const handleTabChange = useCallback((tab: TabType) => {
+  clearSelection();
+  closeContextMenu();
+  startTransition(() => {
+    setActiveTab(tab);
+  });
+}, [clearSelection, closeContextMenu]);
 
-#### 📦 依赖
-- 新增 `@tauri-apps/plugin-shell` - Shell 命令执行
-- 新增 `@tauri-apps/plugin-clipboard-manager` - 剪贴板管理
+// App.tsx - 条件渲染
+{activeTab === "tasks" && <TaskContextMenu />}
+{activeTab === "tasks" && <BatchActionsBar />}
+```
 
----
+##### 问题2：笔记文件夹存储丢失
 
-### 2024-12-05 - 笔记导出 & UI 优化
+**问题描述：**
+- 用户在笔记功能中新建文件夹后，重启应用文件夹消失
+- 原因：`mockFolders` 是内存数组，没有持久化到数据库
+- 所有用户创建的文件夹都会在应用重启时丢失
 
-#### ✨ 新增
-- **笔记导出功能** - 支持多种格式导出
-  - Markdown (.md) - 纯文本格式，保留标题、列表、代码等
-  - PDF (.pdf) - 使用 html2pdf.js 生成精美排版 PDF
-  - LaTeX (.tex) - 完整 LaTeX 文档，可直接编译
-  - Word (.doc) - Office 兼容格式
-- **相对时间显示** - "刚刚"、"5分钟前"、"2小时前" 等友好时间格式
-- **字数统计** - 编辑器顶部实时显示当前笔记字数
+**修复方案：**
+1. 在 `database.ts` 中新增 `folders` 表
+2. 重写 `getFolders()` 函数，从数据库读取文件夹
+3. 重写 `createFolder()` 函数，持久化到数据库
+4. 重写 `deleteFolder()` 函数，从数据库删除并保护笔记数据
 
-#### 🎨 优化
-- **笔记卡片交互升级**
-  - 悬浮时轻微上浮 + 阴影加深，增强点击感
-  - 选中态添加玻璃拟态背景 + 渐变边框 + 动态光效
-  - 置顶标签样式优化，更加醒目
-- **设置页下拉组件** - 原生 select 替换为自定义动画下拉组件
-- **设置持久化修复** - 修复设置重启后丢失的问题
+**数据库新增表：**
+```sql
+CREATE TABLE IF NOT EXISTS folders (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  icon TEXT DEFAULT 'Folder',
+  type TEXT DEFAULT 'user',
+  created_at TEXT DEFAULT (datetime('now'))
+);
 
-#### 🐛 修复
-- 修复 `DeveloperSettings` 缺少 `useLanguage` 导致的构建错误
-- 修复 `ThemeContext` 中 `fontSize` 类型不匹配问题
-- 修复 i18n 文件中重复键导致的构建错误
+-- 初始化系统文件夹
+INSERT OR IGNORE INTO folders (id, name, icon, type) VALUES 
+  ('all', '全部笔记', 'Archive', 'system'),
+  ('trash', '最近删除', 'Trash2', 'system');
+```
 
-#### 📁 新增文件
-- `src/utils/noteExport.ts` - 笔记导出工具（HTML→MD/LaTeX 转换）
-- `src/utils/timeUtils.ts` - 相对时间工具函数
+**关键优化：**
+- 删除文件夹时，将其中的笔记移动到"全部笔记"而非直接删除，保护用户数据
+- 支持浏览器环境的Mock回退机制
 
 #### 📁 修改文件
-- `src/components/NotesLayout.tsx` - 添加导出按钮、优化卡片样式、显示字数
-- `src/components/RichTextEditor.tsx` - 暴露 getWordCount 方法
-- `src/components/settings/SettingsModal.tsx` - 自定义下拉组件
-- `src/hooks/useSettings.ts` - 修复设置加载逻辑
-- `src/lib/tasks.ts` - 初始化时加载设置仓储
-- `src/i18n/zh-CN.ts` - 添加导出相关翻译
-- `src/i18n/en-US.ts` - 添加导出相关翻译
-- `src/i18n/ja-JP.ts` - 添加导出相关翻译
 
-#### 📦 依赖
-- 新增 `html2pdf.js` - PDF 生成库
+**核心修改：**
+- `src/App.tsx` - 添加Tab切换时的状态清理逻辑，条件渲染任务组件
+- `src/lib/database.ts` - 新增folders表和索引
+- `src/lib/notes.ts` - 重写文件夹CRUD操作，实现数据库持久化
+
+**同步到 CJWproductivity-main：**
+- `CJWproductivity-main/src/App.tsx`
+- `CJWproductivity-main/src/lib/database.ts`
+- `CJWproductivity-main/src/lib/notes.ts`
+
+#### 🟡 黄色改善区优化 (Moderate)
+
+- 移除了 `mockFolders` 中的硬编码用户文件夹（personal, work），仅保留系统文件夹作为回退
+- 添加了详细的函数文档注释，说明各函数的职责和修复目的
+
+#### 🟢 绿色保留区 (Stable)
+
+以下模块保持不变，代码逻辑清晰稳定：
+- `Header.tsx` - Tab切换逻辑
+- `TasksView.tsx` - 任务视图
+- `PlansView.tsx` - 计划视图
+- `NotesLayout.tsx` - 笔记布局
+- `TaskSelectionContext.tsx` - 任务选择状态管理
+- `TaskActionsContext.tsx` - 任务操作Context
 
 ---
 

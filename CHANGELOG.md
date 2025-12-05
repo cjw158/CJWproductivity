@@ -4,6 +4,100 @@
 
 ## [未发布]
 
+### 2024-12-05 - 架构优化与关键Bug修复
+
+#### 🔴 红色危重区修复 (Critical)
+
+##### 问题1：功能切换时前后端状态不匹配
+
+**问题描述：**
+- 切换功能时（如从待办切换到笔记），任务相关的右键菜单和批量操作栏仍然激活
+- 用户在笔记界面可能点击到属于待办功能的按钮
+- 严重影响用户体验和软件稳定性
+
+**修复方案：**
+1. 在 `App.tsx` 中，切换Tab时主动清除任务选择状态和右键菜单
+2. 将 `TaskContextMenu` 和 `BatchActionsBar` 组件的渲染条件改为仅在任务视图激活时渲染
+3. 引入 `useTaskSelection` hook 获取 `clearSelection` 和 `closeContextMenu` 方法
+
+**修改代码：**
+```typescript
+// App.tsx - 切换Tab时清除状态
+const handleTabChange = useCallback((tab: TabType) => {
+  clearSelection();
+  closeContextMenu();
+  startTransition(() => {
+    setActiveTab(tab);
+  });
+}, [clearSelection, closeContextMenu]);
+
+// App.tsx - 条件渲染
+{activeTab === "tasks" && <TaskContextMenu />}
+{activeTab === "tasks" && <BatchActionsBar />}
+```
+
+##### 问题2：笔记文件夹存储丢失
+
+**问题描述：**
+- 用户在笔记功能中新建文件夹后，重启应用文件夹消失
+- 原因：`mockFolders` 是内存数组，没有持久化到数据库
+- 所有用户创建的文件夹都会在应用重启时丢失
+
+**修复方案：**
+1. 在 `database.ts` 中新增 `folders` 表
+2. 重写 `getFolders()` 函数，从数据库读取文件夹
+3. 重写 `createFolder()` 函数，持久化到数据库
+4. 重写 `deleteFolder()` 函数，从数据库删除并保护笔记数据
+
+**数据库新增表：**
+```sql
+CREATE TABLE IF NOT EXISTS folders (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  icon TEXT DEFAULT 'Folder',
+  type TEXT DEFAULT 'user',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- 初始化系统文件夹
+INSERT OR IGNORE INTO folders (id, name, icon, type) VALUES 
+  ('all', '全部笔记', 'Archive', 'system'),
+  ('trash', '最近删除', 'Trash2', 'system');
+```
+
+**关键优化：**
+- 删除文件夹时，将其中的笔记移动到"全部笔记"而非直接删除，保护用户数据
+- 支持浏览器环境的Mock回退机制
+
+#### 📁 修改文件
+
+**核心修改：**
+- `src/App.tsx` - 添加Tab切换时的状态清理逻辑，条件渲染任务组件
+- `src/lib/database.ts` - 新增folders表和索引
+- `src/lib/notes.ts` - 重写文件夹CRUD操作，实现数据库持久化
+
+**同步到 CJWproductivity-main：**
+- `CJWproductivity-main/src/App.tsx`
+- `CJWproductivity-main/src/lib/database.ts`
+- `CJWproductivity-main/src/lib/notes.ts`
+
+#### 🟡 黄色改善区优化 (Moderate)
+
+- 移除了 `mockFolders` 中的硬编码用户文件夹（personal, work），仅保留系统文件夹作为回退
+- 添加了详细的函数文档注释，说明各函数的职责和修复目的
+
+#### 🟢 绿色保留区 (Stable)
+
+以下模块保持不变，代码逻辑清晰稳定：
+- `Header.tsx` - Tab切换逻辑
+- `TasksView.tsx` - 任务视图
+- `PlansView.tsx` - 计划视图
+- `NotesLayout.tsx` - 笔记布局
+- `TaskSelectionContext.tsx` - 任务选择状态管理
+- `TaskActionsContext.tsx` - 任务操作Context
+
+---
+
 ### 2024-12-04 - 独立启动窗口
 
 #### ✨ 新增

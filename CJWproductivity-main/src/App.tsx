@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { showIsland } from "@/lib/island";
 import { registerGlobalShortcuts, unregisterGlobalShortcuts } from "@/lib/globalShortcuts";
 import { logger } from "@/lib/logger";
+import { useTaskSelection } from "@/contexts/TaskSelectionContext";
 
 // 懒加载视图组件
 const TasksView = lazy(() => import("@/components/TasksView").then(m => ({ default: m.TasksView })));
@@ -191,15 +192,23 @@ function App() {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   
+  // 获取任务选择状态清理函数
+  const { clearSelection, closeContextMenu } = useTaskSelection();
+  
   // 使用 transition 让 Tab 切换更流畅
   const [, startTransition] = useTransition();
 
   // 缓存 Tab 切换回调 - 使用 startTransition 延迟非紧急渲染
+  // 🔴 关键修复：切换Tab时清除任务选择状态和右键菜单，防止前后端不匹配
   const handleTabChange = useCallback((tab: TabType) => {
+    // 切换前清除任务相关的状态，确保视图切换后状态一致
+    clearSelection();
+    closeContextMenu();
+    
     startTransition(() => {
       setActiveTab(tab);
     });
-  }, []);
+  }, [clearSelection, closeContextMenu]);
 
   // 缓存背景样式类
   const containerClassName = useMemo(() => cn(
@@ -327,11 +336,11 @@ function App() {
       {/* Zen Mode Overlay */}
       <FocusOverlay />
 
-      {/* Context Menu */}
-      <TaskContextMenu />
+      {/* Context Menu - 🔴 关键修复：仅在任务视图激活时渲染 */}
+      {activeTab === "tasks" && <TaskContextMenu />}
 
-      {/* Batch Actions Bar */}
-      <BatchActionsBar />
+      {/* Batch Actions Bar - 🔴 关键修复：仅在任务视图激活时渲染 */}
+      {activeTab === "tasks" && <BatchActionsBar />}
     </div>
   );
 }
