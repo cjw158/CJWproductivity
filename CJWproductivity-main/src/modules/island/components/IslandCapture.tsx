@@ -10,6 +10,7 @@ import { stripHtml } from "@/utils";
 import { SYSTEM_FONT } from "../constants";
 import type { IslandColors } from "../constants";
 import type { NoteMode } from "../types";
+import type { Note } from "@/types";
 
 interface IslandCaptureProps {
   captureText: string;
@@ -23,7 +24,7 @@ interface IslandCaptureProps {
   setNoteMode: (mode: NoteMode) => void;
   selectedNoteId: number | null;
   setSelectedNoteId: (id: number | null) => void;
-  recentNotes: any[];
+  recentNotes: Note[];
   latestNoteTitle: string | null;
   colors: IslandColors;
   inputRef: React.RefObject<HTMLTextAreaElement>;

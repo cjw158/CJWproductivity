@@ -29,8 +29,8 @@ export interface UseCaptureReturn {
   handlePaste: (e: React.ClipboardEvent) => void;
   handleScreenshot: () => Promise<void>;
   lineCount: number;
-  recentNotes: any[];
-  latestNote: any | null;
+  recentNotes: any[]; // Note: Using any[] to match the hook's usage pattern
+  latestNote: any | null; // Note: Using any to match the hook's usage pattern
   latestNoteTitle: string | null;
 }
 
