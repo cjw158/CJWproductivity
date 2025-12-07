@@ -244,6 +244,8 @@ export const zhCN = {
     view: "浏览",
     edit: "编辑",
     words: "字",
+    emptyHint: "从左侧选择一篇笔记，或创建新笔记开始记录",
+    quickCreate: "快速新建",
   },
 
   // 灵动岛

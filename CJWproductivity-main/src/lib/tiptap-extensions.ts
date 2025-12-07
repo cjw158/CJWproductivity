@@ -1,4 +1,24 @@
 import { Node, mergeAttributes } from '@tiptap/core';
+import Heading from '@tiptap/extension-heading';
+
+// 自定义 Heading 扩展，支持 id 属性
+export const HeadingWithId = Heading.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      id: {
+        default: null,
+        parseHTML: element => element.getAttribute('id'),
+        renderHTML: attributes => {
+          if (!attributes.id) {
+            return {};
+          }
+          return { id: attributes.id };
+        },
+      },
+    };
+  },
+});
 
 export interface ImageOptions {
   inline: boolean;
@@ -22,8 +42,8 @@ export const Image = Node.create<ImageOptions>({
 
   addOptions() {
     return {
-      inline: false,
-      allowBase64: false,
+      inline: true,
+      allowBase64: true,
       HTMLAttributes: {},
     };
   },
@@ -49,6 +69,19 @@ export const Image = Node.create<ImageOptions>({
       title: {
         default: null,
       },
+      width: {
+        default: null,
+      },
+      height: {
+        default: null,
+      },
+      // 防盗链：添加 referrerpolicy 属性
+      referrerpolicy: {
+        default: 'no-referrer', // 默认禁用 referrer，解决 CSDN 等平台的防盗链问题
+      },
+      loading: {
+        default: 'lazy', // 懒加载
+      },
     };
   },
 
@@ -56,6 +89,18 @@ export const Image = Node.create<ImageOptions>({
     return [
       {
         tag: 'img[src]',
+        getAttrs: (element) => {
+          const el = element as HTMLElement;
+          return {
+            src: el.getAttribute('src'),
+            alt: el.getAttribute('alt'),
+            title: el.getAttribute('title'),
+            width: el.getAttribute('width'),
+            height: el.getAttribute('height'),
+            referrerpolicy: el.getAttribute('referrerpolicy') || 'no-referrer',
+            loading: el.getAttribute('loading') || 'lazy',
+          };
+        },
       },
     ];
   },

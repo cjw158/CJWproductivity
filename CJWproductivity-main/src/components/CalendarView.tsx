@@ -27,8 +27,8 @@ function getDaysInMonth(year: number, month: number): Date[] {
   return days;
 }
 
-function openQuickCapture() {
-  window.dispatchEvent(new CustomEvent("open-quickcapture"));
+function openQuickCapture(dueDate?: string) {
+  window.dispatchEvent(new CustomEvent("open-quickcapture", { detail: { dueDate } }));
 }
 
 export const CalendarView = memo(function CalendarView() {
@@ -205,7 +205,7 @@ export const CalendarView = memo(function CalendarView() {
             </p>
           </div>
           <button
-            onClick={openQuickCapture}
+            onClick={() => openQuickCapture(formatDate(selectedDate))}
             className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors", isDark ? "border-[var(--neon-cyan)]/50 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/10" : "border-blue-400 text-blue-500 hover:bg-blue-50")}
           >
             <Plus className="w-4 h-4" />{t("tasks.newTask")}
@@ -217,7 +217,7 @@ export const CalendarView = memo(function CalendarView() {
             <div className={cn("text-center py-16", isDark ? "text-white/30" : "text-gray-400")}>
               <CalendarDays className="w-12 h-12 mx-auto mb-3 opacity-50" />
               <p className="text-sm mb-3">{t("calendar.noTasksToday")}</p>
-              <button onClick={openQuickCapture} className={cn("text-sm px-4 py-2 rounded-lg border", isDark ? "border-white/10 hover:bg-white/5 text-white/60" : "border-gray-200 hover:bg-gray-50 text-gray-600")}>
+              <button onClick={() => openQuickCapture(formatDate(selectedDate))} className={cn("text-sm px-4 py-2 rounded-lg border", isDark ? "border-white/10 hover:bg-white/5 text-white/60" : "border-gray-200 hover:bg-gray-50 text-gray-600")}>
                 <Plus className="w-4 h-4 inline mr-1" />{t("calendar.quickAdd")}
               </button>
             </div>

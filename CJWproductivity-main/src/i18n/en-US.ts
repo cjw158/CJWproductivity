@@ -246,6 +246,8 @@ export const enUS: TranslationKeys = {
     view: "View",
     edit: "Edit",
     words: "words",
+    emptyHint: "Select a note from the left, or create a new one",
+    quickCreate: "Quick Create",
   },
 
   // Dynamic Island

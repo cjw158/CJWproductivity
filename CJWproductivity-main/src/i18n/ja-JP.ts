@@ -246,6 +246,8 @@ export const jaJP: TranslationKeys = {
     view: "閲覧",
     edit: "編集",
     words: "文字",
+    emptyHint: "左側からノートを選択するか、新しいノートを作成してください",
+    quickCreate: "新規作成",
   },
 
   // ダイナミックアイランド

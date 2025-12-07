@@ -4,6 +4,7 @@
  */
 
 import type { Note } from "@/lib/notes";
+import { extractH1Title } from "@/utils";
 
 // ============ HTML 转 Markdown ============
 
@@ -187,7 +188,7 @@ export async function exportToMarkdown(note: Note): Promise<string> {
     throw new Error("笔记内容为空");
   }
   const markdown = htmlToMarkdown(note.content);
-  const title = extractTitle(note.content) || "Untitled";
+  const title = extractH1Title(note.content, "Untitled");
   const filename = `${title}.md`;
   
   downloadFile(filename, markdown, "text/markdown");
@@ -201,7 +202,7 @@ export async function exportToPDF(note: Note, _isDark?: boolean): Promise<string
   if (!note.content) {
     throw new Error("笔记内容为空");
   }
-  const title = extractTitle(note.content) || "Untitled";
+  const title = extractH1Title(note.content, "Untitled");
   const filename = `${title}.pdf`;
   
   // 动态导入 html2pdf.js
@@ -277,7 +278,7 @@ export async function exportToLatex(note: Note): Promise<string> {
   if (!note.content) {
     throw new Error("笔记内容为空");
   }
-  const title = extractTitle(note.content) || "Untitled";
+  const title = extractH1Title(note.content, "Untitled");
   const latex = htmlToLatex(note.content, title);
   const filename = `${title}.tex`;
   
@@ -292,7 +293,7 @@ export async function exportToWord(note: Note): Promise<string> {
   if (!note.content) {
     throw new Error("笔记内容为空");
   }
-  const title = extractTitle(note.content) || "Untitled";
+  const title = extractH1Title(note.content, "Untitled");
   const filename = `${title}.doc`;
   
   // 使用 HTML 格式创建 Word 文档
@@ -351,21 +352,6 @@ export async function exportToWord(note: Note): Promise<string> {
 }
 
 // ============ 辅助函数 ============
-
-function extractTitle(html: string): string {
-  if (!html) return "Untitled";
-  
-  // 尝试从 H1 标签提取标题
-  const h1Match = html.match(/<h1[^>]*>(.*?)<\/h1>/i);
-  if (h1Match) {
-    return h1Match[1].replace(/<[^>]+>/g, "").trim();
-  }
-  
-  // 尝试从第一行文本提取
-  const textMatch = html.replace(/<[^>]+>/g, "").trim();
-  const firstLine = textMatch.split("\n")[0];
-  return firstLine.substring(0, 50) || "Untitled";
-}
 
 function downloadFile(filename: string, content: string, mimeType: string): void {
   const blob = new Blob([content], { type: mimeType + ";charset=utf-8" });

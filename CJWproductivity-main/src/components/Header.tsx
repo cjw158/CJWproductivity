@@ -7,6 +7,7 @@ import { useEnergyMode } from "@/hooks/useEnergyMode";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toggleIsland, isIslandVisible } from "@/lib/island";
+import logoImage from "/logo.png";
 
 export type TabType = "tasks" | "plans" | "notes";
 
@@ -83,7 +84,19 @@ export const Header = memo(function Header({ activeTab, onTabChange, onOpenSetti
     >
       {/* Logo & Context */}
       <div className="flex items-center gap-4">
-        <div className="flex items-center cursor-pointer select-none">
+        <div className="flex items-center gap-3 cursor-pointer select-none">
+          {/* Logo 图标 - 透明背景 */}
+          <motion.img
+            src={logoImage}
+            alt="CJW Logo"
+            className="w-14 h-14 object-contain flex-shrink-0"
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.95 }}
+            style={{
+              filter: isDark ? "none" : "invert(1) hue-rotate(180deg)"
+            }}
+          />
+          
           <h1 className={cn(
             "text-lg font-bold tracking-tight flex items-center",
             isDark ? "text-white" : "text-gray-900"

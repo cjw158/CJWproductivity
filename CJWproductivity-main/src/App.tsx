@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { toast } from "@/hooks/useToast";
 import { initializeDataStore } from "@/lib/tasks";
 import { usePreloadData, usePreloadComponents } from "@/hooks/usePreload";
+import { useTaskSelection } from "@/contexts/TaskSelectionContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useSettings } from "@/hooks/useSettings";
 import { cn } from "@/lib/utils";
@@ -37,9 +38,9 @@ const pageVariants = {
 };
 
 const pageTransition = {
-  type: "spring",
-  stiffness: 260,
-  damping: 20
+  type: "tween",
+  ease: "easeOut",
+  duration: 0.2
 };
 
 // 判断是否为特殊窗口
@@ -58,6 +59,7 @@ function App() {
   
   const [activeTab, setActiveTab] = useState<TabType>(startPage as TabType);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  const [quickCaptureDefaultDate, setQuickCaptureDefaultDate] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   // 在 Tauri 环境中，由独立的 splash 窗口显示启动动画，主窗口不再显示内部 splash
@@ -138,8 +140,10 @@ function App() {
       pressedKeys.current.clear();
     };
 
-    // 监听外部打开 QuickCapture 的事件
-    const handleOpenQuickCapture = () => {
+    // 监听外部打开 QuickCapture 的事件（可带默认日期）
+    const handleOpenQuickCapture = (e: Event) => {
+      const customEvent = e as CustomEvent<{ dueDate?: string }>;
+      setQuickCaptureDefaultDate(customEvent.detail?.dueDate || null);
       setQuickCaptureOpen(true);
     };
 
@@ -166,10 +170,12 @@ function App() {
 
   const handleCloseQuickCapture = useCallback(() => {
     setQuickCaptureOpen(false);
+    setQuickCaptureDefaultDate(null);
   }, []);
 
   const handleSaveAndCloseQuickCapture = useCallback(() => {
     setQuickCaptureOpen(false);
+    setQuickCaptureDefaultDate(null);
   }, []);
 
   const handleCreated = useCallback(() => {
@@ -194,12 +200,18 @@ function App() {
   // 使用 transition 让 Tab 切换更流畅
   const [, startTransition] = useTransition();
 
-  // 缓存 Tab 切换回调 - 使用 startTransition 延迟非紧急渲染
+  // 获取任务选择上下文（用于切换标签时清理状态）
+  const { clearSelection, closeContextMenu } = useTaskSelection();
+
+  // 缓存 Tab 切换回调 - 清理任务状态并使用 startTransition 延迟非紧急渲染
   const handleTabChange = useCallback((tab: TabType) => {
+    // 切换标签时清除任务选择和关闭上下文菜单
+    clearSelection();
+    closeContextMenu();
     startTransition(() => {
       setActiveTab(tab);
     });
-  }, []);
+  }, [clearSelection, closeContextMenu]);
 
   // 缓存背景样式类
   const containerClassName = useMemo(() => cn(
@@ -310,6 +322,7 @@ function App() {
           onClose={handleCloseQuickCapture}
           onSaveAndClose={handleSaveAndCloseQuickCapture}
           onCreated={handleCreated}
+          defaultDueDate={quickCaptureDefaultDate}
         />
       </Suspense>
 
@@ -327,11 +340,11 @@ function App() {
       {/* Zen Mode Overlay */}
       <FocusOverlay />
 
-      {/* Context Menu */}
-      <TaskContextMenu />
+      {/* Context Menu - 仅在任务视图显示 */}
+      {activeTab === "tasks" && <TaskContextMenu />}
 
-      {/* Batch Actions Bar */}
-      <BatchActionsBar />
+      {/* Batch Actions Bar - 仅在任务视图显示 */}
+      {activeTab === "tasks" && <BatchActionsBar />}
     </div>
   );
 }

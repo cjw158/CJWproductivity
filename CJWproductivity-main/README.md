@@ -271,6 +271,8 @@ npm run dev
 
 ## 📝 更新日志
 
+> 详细更新日志请查看 [CHANGELOG.md](./CHANGELOG.md)
+
 ### v0.3.0 (2024-12)
 - ✨ 新增 Smart Capture：支持自然语言日期识别
 - ✨ 新增 Zen Mode：可拖拽悬浮计时器 HUD

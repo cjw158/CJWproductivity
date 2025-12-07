@@ -29,6 +29,7 @@ import {
   Check,
   Code2,
   ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -53,6 +54,7 @@ import { downloadBackup, importFromFile } from "@/lib/backup";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { languageNames } from "@/i18n";
 import type { Language } from "@/types/settings";
+import logoImage from "/logo.png";
 
 // ============ 常量 ============
 
@@ -457,36 +459,57 @@ const GeneralSettings = memo(function GeneralSettings({ isDark }: { isDark: bool
         </div>
       </SettingItem>
 
-      {/* 字体大小 */}
+      {/* 字体大小 - 滚轮调节 */}
       <SettingItem 
         label={t("settings.general.fontSize")} 
         description={t("settings.general.fontSizeDesc", { size: localFontSize, min: FONT_SIZE_MIN, max: FONT_SIZE_MAX })} 
         isDark={isDark}
       >
-        <div className="flex items-center gap-3 min-w-[200px]">
-          <span className={cn("text-xs", isDark ? "text-white/40" : "text-gray-400")}>{FONT_SIZE_MIN}</span>
-          <input
-            type="range"
-            min={FONT_SIZE_MIN}
-            max={FONT_SIZE_MAX}
-            step={1}
-            value={localFontSize}
-            onChange={(e) => handleFontSizeChange(Number(e.target.value))}
-            className={cn(
-              "flex-1 h-2 rounded-full appearance-none cursor-pointer",
-              "[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full",
-              isDark 
-                ? "bg-white/10 [&::-webkit-slider-thumb]:bg-[var(--neon-cyan)]" 
-                : "bg-gray-200 [&::-webkit-slider-thumb]:bg-blue-500"
-            )}
-          />
-          <span className={cn("text-xs", isDark ? "text-white/40" : "text-gray-400")}>{FONT_SIZE_MAX}</span>
+        <div 
+          className={cn(
+            "flex items-center gap-2 px-3 py-2 rounded-lg cursor-ns-resize select-none transition-all",
+            isDark 
+              ? "bg-white/5 hover:bg-white/10 border border-white/10" 
+              : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
+          )}
+          onWheel={(e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -1 : 1;
+            const newSize = Math.min(Math.max(localFontSize + delta, FONT_SIZE_MIN), FONT_SIZE_MAX);
+            handleFontSizeChange(newSize);
+          }}
+          title="滚动鼠标滚轮调节"
+        >
           <span className={cn(
-            "text-sm font-bold min-w-[40px] text-center",
-            isDark ? "text-[var(--neon-cyan)]" : "text-blue-500"
+            "text-lg font-bold tabular-nums min-w-[48px] text-center",
+            isDark ? "text-[var(--neon-cyan)]" : "text-blue-600"
           )}>
             {localFontSize}px
           </span>
+          <div className="flex flex-col gap-0.5">
+            <button
+              onClick={() => handleFontSizeChange(Math.min(localFontSize + 1, FONT_SIZE_MAX))}
+              className={cn(
+                "p-0.5 rounded transition-colors",
+                isDark 
+                  ? "hover:bg-white/20 text-white/50 hover:text-white" 
+                  : "hover:bg-gray-300 text-gray-400 hover:text-gray-600"
+              )}
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => handleFontSizeChange(Math.max(localFontSize - 1, FONT_SIZE_MIN))}
+              className={cn(
+                "p-0.5 rounded transition-colors",
+                isDark 
+                  ? "hover:bg-white/20 text-white/50 hover:text-white" 
+                  : "hover:bg-gray-300 text-gray-400 hover:text-gray-600"
+              )}
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </SettingItem>
 
@@ -1299,7 +1322,7 @@ const AboutSection = memo(function AboutSection({ isDark }: { isDark: boolean })
             isDark ? "bg-white/5" : "bg-gray-100"
           )}
         >
-          <img src="/logo.svg" alt="Logo" className="w-12 h-12" style={{ filter: isDark ? "none" : "invert(1)" }} />
+          <img src={logoImage} alt="Logo" className="w-14 h-14" style={{ filter: isDark ? "none" : "invert(1) hue-rotate(180deg)" }} />
         </div>
         <h3 className={cn("text-xl font-bold", isDark ? "text-white" : "text-gray-900")}>
           CJWproductivity

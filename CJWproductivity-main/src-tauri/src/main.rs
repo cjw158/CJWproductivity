@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
+use window_vibrancy::apply_blur;
 
 mod wallpaper_engine;
 use wallpaper_engine::RenderOptions;
@@ -215,6 +216,23 @@ fn main() {
             render_wallpaper_native,
         ])
         .setup(|app| {
+            // 为 splash 窗口应用透明效果 (Windows)
+            #[cfg(target_os = "windows")]
+            if let Some(splash) = app.get_webview_window("splash") {
+                let _ = apply_blur(&splash, Some((0, 0, 0, 0)));
+            }
+            
+            // 设置窗口图标 (从 PNG 加载)
+            let icon_bytes = include_bytes!("../icons/icon.png");
+            if let Ok(img) = image::load_from_memory(icon_bytes) {
+                let rgba = img.to_rgba8();
+                let (width, height) = rgba.dimensions();
+                let icon = tauri::image::Image::new_owned(rgba.into_raw(), width, height);
+                for (_label, window) in app.webview_windows() {
+                    let _ = window.set_icon(icon.clone());
+                }
+            }
+            
             let _spotlight = app.get_webview_window("spotlight");
             Ok(())
         })

@@ -5,9 +5,10 @@ import toIco from 'to-ico';
 import { writeFileSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const projectDir = join(__dirname, '..');
+const projectDir = join(__dirname, '..', 'CJWproductivity-main');
 const iconsDir = join(projectDir, 'src-tauri', 'icons');
-const sourceLogo = join(projectDir, 'Gemini_Generated_Image_8j0gp08j0gp08j0g (1).svg');
+// 圆形透明背景 Logo
+const sourceLogo = join(projectDir, '微信图片_20251207114224.png');
 
 // 所有需要生成的图标尺寸
 const sizes = [
@@ -28,84 +29,75 @@ const sizes = [
   { name: 'StoreLogo.png', size: 50 },
 ];
 
-// 深色背景色 (与应用主题匹配)
-const BG_COLOR = { r: 15, g: 15, b: 20, alpha: 1 }; // #0f0f14
-
 async function generateIcons() {
   console.log('Generating icons from:', sourceLogo);
+  console.log('Using circular transparent logo...\n');
   
-  // 生成所有 PNG 尺寸 (带深色背景)
+  // 生成所有 PNG 尺寸（保持透明背景）
   for (const { name, size } of sizes) {
     const outputPath = join(iconsDir, name);
     
-    // 创建深色背景，然后合成 logo
-    const background = await sharp({
-      create: {
-        width: size,
-        height: size,
-        channels: 4,
-        background: BG_COLOR
-      }
-    }).png().toBuffer();
-    
-    const logo = await sharp(sourceLogo)
-      .resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-      .png()
-      .toBuffer();
-    
-    await sharp(background)
-      .composite([{ input: logo, blend: 'over' }])
-      .png()
+    await sharp(sourceLogo)
+      .resize(size, size, { 
+        fit: 'contain',
+        background: { r: 0, g: 0, b: 0, alpha: 0 },  // 透明背景
+        kernel: sharp.kernel.lanczos3  // 高质量缩放算法
+      })
+      .png({ 
+        compressionLevel: 9,  // 最大压缩但无损
+        palette: false        // 不使用调色板，保持真彩色
+      })
       .toFile(outputPath);
     
     console.log(`✓ Generated ${name} (${size}x${size})`);
   }
   
-  // 生成 ICO (Windows) - 包含多个尺寸 (带深色背景)
-  console.log('Generating icon.ico...');
+  // 生成 ICO (Windows) - 包含多个尺寸（保持透明）
+  console.log('\nGenerating icon.ico...');
   const icoSizes = [16, 24, 32, 48, 64, 128, 256];
   const icoBuffers = await Promise.all(
     icoSizes.map(async size => {
-      const background = await sharp({
-        create: {
-          width: size,
-          height: size,
-          channels: 4,
-          background: BG_COLOR
-        }
-      }).png().toBuffer();
-      
-      const logo = await sharp(sourceLogo)
-        .resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-        .png()
-        .toBuffer();
-      
-      return sharp(background)
-        .composite([{ input: logo, blend: 'over' }])
-        .png()
+      return sharp(sourceLogo)
+        .resize(size, size, { 
+          fit: 'contain',
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+          kernel: sharp.kernel.lanczos3
+        })
+        .png({ compressionLevel: 9, palette: false })
         .toBuffer();
     })
   );
   const icoBuffer = await toIco(icoBuffers);
   writeFileSync(join(iconsDir, 'icon.ico'), icoBuffer);
-  console.log('✓ Generated icon.ico');
+  console.log('✓ Generated icon.ico (multi-size: 16-256px)');
   
-  // 复制到 public 目录作为 favicon (带深色背景)
+  // 复制到 public 目录
   const publicDir = join(projectDir, 'public');
-  const bgFavicon = await sharp({
-    create: { width: 32, height: 32, channels: 4, background: BG_COLOR }
-  }).png().toBuffer();
-  const logoFavicon = await sharp(sourceLogo)
-    .resize(32, 32, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-    .png()
-    .toBuffer();
-  await sharp(bgFavicon)
-    .composite([{ input: logoFavicon, blend: 'over' }])
-    .png()
+  
+  // 启动动画 Logo (512px)
+  await sharp(sourceLogo)
+    .resize(512, 512, { 
+      fit: 'contain', 
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+      kernel: sharp.kernel.lanczos3 
+    })
+    .png({ compressionLevel: 9, palette: false })
+    .toFile(join(publicDir, 'logo.png'));
+  console.log('✓ Generated public/logo.png (启动动画)');
+  
+  // Favicon (32px)
+  await sharp(sourceLogo)
+    .resize(32, 32, { 
+      fit: 'contain', 
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+      kernel: sharp.kernel.lanczos3 
+    })
+    .png({ compressionLevel: 9, palette: false })
     .toFile(join(publicDir, 'favicon.png'));
   console.log('✓ Generated public/favicon.png');
   
   console.log('\n✅ All icons generated successfully!');
+  console.log('Source: 微信图片_20251207114224.png (圆形透明 Logo)');
   console.log('Note: For macOS .icns, use: https://cloudconvert.com/png-to-icns');
 }
 

@@ -62,6 +62,12 @@ export interface IPlanImageRepository {
   getFullPath(imagePath: string): Promise<string>;
 
   /**
+   * 批量更新排序顺序
+   * @param orders - 排序数组 [{id, sortOrder}]
+   */
+  updateSortOrders(orders: { id: number; sortOrder: number }[]): Promise<void>;
+
+  /**
    * 清理孤立记录（文件已丢失的数据库记录）
    * @returns 清理的记录数量
    */

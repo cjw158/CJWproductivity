@@ -1,10 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import {
   getFolders,
   getNotes,
   createNote,
   updateNote,
   deleteNote,
+  restoreNote,
+  permanentDeleteNote,
+  emptyTrash,
+  cleanupDeletedNotes,
   createFolder,
   deleteFolder,
   type CreateNoteInput,
@@ -89,4 +94,62 @@ export function useDeleteNote() {
       queryClient.invalidateQueries({ queryKey: NOTES_QUERY_KEY });
     },
   });
+}
+
+// ============ 回收站功能 ============
+
+/**
+ * 恢复已删除的笔记
+ */
+export function useRestoreNote() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) => restoreNote(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: NOTES_QUERY_KEY });
+    },
+  });
+}
+
+/**
+ * 永久删除笔记
+ */
+export function usePermanentDeleteNote() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) => permanentDeleteNote(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: NOTES_QUERY_KEY });
+    },
+  });
+}
+
+/**
+ * 清空回收站
+ */
+export function useEmptyTrash() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => emptyTrash(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: NOTES_QUERY_KEY });
+    },
+  });
+}
+
+/**
+ * 启动时自动清理超过7天的已删除笔记
+ */
+export function useAutoCleanupNotes() {
+  useEffect(() => {
+    // 启动时清理
+    cleanupDeletedNotes(7).then(count => {
+      if (count > 0) {
+        console.log(`[notes] Auto-cleaned ${count} deleted notes older than 7 days`);
+      }
+    });
+  }, []);
 }

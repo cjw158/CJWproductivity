@@ -27,6 +27,7 @@ interface PlanImageRow {
   width: number | null;
   height: number | null;
   created_at: string;
+  sort_order: number;
 }
 
 // ============ 工具函数 ============
@@ -54,6 +55,7 @@ function rowToModel(row: PlanImageRow): PlanImage {
     width: row.width,
     height: row.height,
     createdAt: row.created_at,
+    sortOrder: row.sort_order ?? 0,
   };
 }
 
@@ -95,9 +97,15 @@ export class PlanImageRepository implements IPlanImageRepository {
           file_size INTEGER NOT NULL DEFAULT 0,
           width INTEGER,
           height INTEGER,
-          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          sort_order INTEGER NOT NULL DEFAULT 0
         )
       `);
+      
+      // 迁移：添加 sort_order 列（如果不存在）
+      try {
+        await this.db.execute(`ALTER TABLE plan_images ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+      } catch (e) { /* 列已存在 */ }
 
       // 获取应用数据目录
       const { appDataDir, sep } = await import("@tauri-apps/api/path");
@@ -124,17 +132,25 @@ export class PlanImageRepository implements IPlanImageRepository {
   }
 
   /**
-   * 获取所有图片，按创建时间倒序
+   * 获取所有图片，按 sort_order 排序（0 表示未排序，按创建时间倒序）
    */
   async getAll(): Promise<PlanImage[]> {
     await this.initialize();
 
     if (this.isMock) {
-      return [...this.mockData].reverse();
+      return [...this.mockData].sort((a, b) => {
+        if (a.sortOrder === 0 && b.sortOrder === 0) {
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        }
+        return a.sortOrder - b.sortOrder;
+      });
     }
 
     const rows = await this.db!.select<PlanImageRow[]>(
-      "SELECT * FROM plan_images ORDER BY created_at DESC"
+      `SELECT * FROM plan_images 
+       ORDER BY CASE WHEN sort_order = 0 THEN 1 ELSE 0 END, 
+                sort_order ASC, 
+                created_at DESC`
     );
     return rows.map(rowToModel);
   }
@@ -179,6 +195,7 @@ export class PlanImageRepository implements IPlanImageRepository {
         width: null,
         height: null,
         createdAt: now,
+        sortOrder: this.mockData.length + 1,
       };
       this.mockData.push(newImage);
       return newImage;
@@ -303,6 +320,31 @@ export class PlanImageRepository implements IPlanImageRepository {
     } catch (error) {
       console.error("[PlanImageRepository] Failed to check file:", error);
       return "";
+    }
+  }
+
+  /**
+   * 批量更新排序顺序
+   */
+  async updateSortOrders(orders: { id: number; sortOrder: number }[]): Promise<void> {
+    await this.initialize();
+
+    if (this.isMock) {
+      orders.forEach(({ id, sortOrder }) => {
+        const image = this.mockData.find(img => img.id === id);
+        if (image) {
+          image.sortOrder = sortOrder;
+        }
+      });
+      return;
+    }
+
+    // 使用事务批量更新
+    for (const { id, sortOrder } of orders) {
+      await this.db!.execute(
+        "UPDATE plan_images SET sort_order = ? WHERE id = ?",
+        [sortOrder, id]
+      );
     }
   }
 

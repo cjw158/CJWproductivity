@@ -10,7 +10,7 @@
  * 5. 响应式布局
  */
 
-import { memo, useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { memo, useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ImagePlus, Upload, X, Trash2, Edit3, 
@@ -27,134 +27,85 @@ import {
   useUploadPlanImage, 
   useDeletePlanImage,
   useUpdatePlanImageTitle,
+  useUpdatePlanImageSortOrders,
   useImageSrc
 } from "@/hooks/usePlanImages";
 import type { PlanImage } from "@/types";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  rectSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 // ============ 常量配置 ============
 
 const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
-// ============ 辅助函数 ============
-
-function groupImagesByMonth(images: PlanImage[], language: string) {
-  const groups: Record<string, PlanImage[]> = {};
-  const locale = language === "zh-CN" ? "zh-CN" : language === "ja-JP" ? "ja-JP" : "en-US";
-  
-  images.forEach(img => {
-    const date = new Date(img.createdAt);
-    const month = date.toLocaleDateString(locale, { year: "numeric", month: "long" });
-    if (!groups[month]) groups[month] = [];
-    groups[month].push(img);
-  });
-  
-  return groups;
+// 获取图片的月份键
+function getMonthKey(dateStr: string, locale: string = "zh-CN"): string {
+  const date = new Date(dateStr);
+  return date.toLocaleDateString(locale, { year: "numeric", month: "long" });
 }
-
-// ============ 瀑布流 Hook ============
-
-function useMasonry<T>(items: T[], columns: number) {
-  return useMemo(() => {
-    const cols: T[][] = Array.from({ length: columns }, () => []);
-    items.forEach((item, i) => {
-      cols[i % columns].push(item);
-    });
-    return cols;
-  }, [items, columns]);
-}
-
-// ============ 响应式列数 Hook ============
-
-function useColumns() {
-  const [columns, setColumns] = useState(3);
-
-  useEffect(() => {
-    const updateColumns = () => {
-      if (window.innerWidth < 640) setColumns(2);
-      else if (window.innerWidth < 1024) setColumns(3);
-      else setColumns(4);
-    };
-    
-    updateColumns();
-    window.addEventListener("resize", updateColumns);
-    return () => window.removeEventListener("resize", updateColumns);
-  }, []);
-
-  return columns;
-}
-
-// ============ 月份分组组件 ============
-
-const MonthSection = memo(function MonthSection({ 
-  month, 
-  images, 
-  isDark, 
-  onImageClick, 
-  onImageDelete 
-}: { 
-  month: string; 
-  images: PlanImage[]; 
-  isDark: boolean; 
-  onImageClick: (img: PlanImage) => void; 
-  onImageDelete: (id: number) => void; 
-}) {
-  const columns = useColumns();
-  const masonryCols = useMasonry(images, columns);
-
-  return (
-    <div className="relative pl-8 border-l-2 border-dashed" style={{ borderColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }}>
-      {/* 时间节点 */}
-      <div className={cn(
-        "absolute -left-[9px] top-6 w-4 h-4 rounded-full border-4",
-        isDark ? "bg-[#1a1a1f] border-[var(--neon-cyan)]" : "bg-gray-50 border-blue-500"
-      )} />
-      
-      {/* 月份标题 */}
-      <div className="flex items-center gap-3 mb-6 pt-4">
-        <h2 className={cn("text-2xl font-bold", isDark ? "text-white" : "text-gray-900")}>
-          {month}
-        </h2>
-        <span className={cn("text-sm px-2 py-0.5 rounded-full font-medium", isDark ? "bg-white/10 text-white/50" : "bg-gray-200 text-gray-600")}>
-          {images.length} 张
-        </span>
-      </div>
-
-      {/* 真·瀑布流布局 */}
-      <div className="flex gap-4 items-start">
-        {masonryCols.map((col: PlanImage[], colIndex: number) => (
-          <div key={colIndex} className="flex-1 space-y-4">
-            {col.map((image: PlanImage, imgIndex: number) => (
-              <ImageCard
-                key={image.id}
-                image={image}
-                isDark={isDark}
-                index={imgIndex}
-                onClick={() => onImageClick(image)}
-                onDelete={() => onImageDelete(image.id)}
-              />
-            ))}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-});
 
 // ============ 主组件 ============
 
 export const PlansView = memo(function PlansView() {
   const { theme } = useTheme();
-  const { t, language } = useLanguage();
+  const { t } = useLanguage();
   const isDark = theme === "dark";
   
   const { data: images = [], isLoading } = usePlanImages();
   const uploadMutation = useUploadPlanImage();
   const deleteMutation = useDeletePlanImage();
+  const updateSortOrders = useUpdatePlanImageSortOrders();
   
   const [isDragging, setIsDragging] = useState(false);
   const [selectedImage, setSelectedImage] = useState<PlanImage | null>(null);
+  const [localImages, setLocalImages] = useState<PlanImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 同步服务器数据到本地状态
+  useEffect(() => {
+    setLocalImages(images);
+  }, [images]);
+
+  // dnd-kit sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 10 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  // 拖拽结束处理
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (over && active.id !== over.id) {
+      const oldIndex = localImages.findIndex(img => img.id === active.id);
+      const newIndex = localImages.findIndex(img => img.id === over.id);
+      
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const newImages = arrayMove(localImages, oldIndex, newIndex);
+        setLocalImages(newImages);
+        
+        // 更新排序顺序到数据库
+        const orders = newImages.map((img, idx) => ({ id: img.id, sortOrder: idx + 1 }));
+        updateSortOrders.mutate(orders);
+      }
+    }
+  }, [localImages, updateSortOrders]);
 
   /**
    * 处理文件上传
@@ -309,7 +260,7 @@ export const PlansView = memo(function PlansView() {
 
   return (
     <div 
-      className="h-full overflow-y-auto p-4 pt-2"
+      className="h-full overflow-y-auto p-4 pt-2 plans-scrollbar"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -323,6 +274,22 @@ export const PlansView = memo(function PlansView() {
         className="hidden"
         onChange={(e) => e.target.files && handleUpload(e.target.files)}
       />
+
+      {/* 右上角添加按钮 */}
+      <div className="flex justify-end mb-4">
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200",
+            isDark 
+              ? "bg-[var(--neon-cyan)]/10 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/20 border border-[var(--neon-cyan)]/30" 
+              : "bg-blue-500 text-white hover:bg-blue-600 shadow-sm"
+          )}
+        >
+          <ImagePlus className="w-4 h-4" />
+          添加计划
+        </button>
+      </div>
 
       {/* 拖拽提示遮罩 */}
       <AnimatePresence>
@@ -347,22 +314,73 @@ export const PlansView = memo(function PlansView() {
         )}
       </AnimatePresence>
 
-      {/* 图片列表区域 */}
-      {images.length === 0 ? (
+      {/* 图片列表区域 - 可拖拽排序 */}
+      {localImages.length === 0 ? (
         <EmptyState isDark={isDark} onUpload={() => fileInputRef.current?.click()} />
       ) : (
-        <div className="space-y-12 pb-10 pl-4">
-          {Object.entries(groupImagesByMonth(images, language)).map(([month, monthImages]) => (
-            <MonthSection
-              key={month}
-              month={month}
-              images={monthImages}
-              isDark={isDark}
-              onImageClick={setSelectedImage}
-              onImageDelete={handleDelete}
-            />
-          ))}
-        </div>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={localImages.map(img => img.id)}
+            strategy={rectSortingStrategy}
+          >
+            <div className="space-y-6 pb-10">
+              {/* 按月份分组显示 */}
+              {(() => {
+                const groups: { month: string; images: PlanImage[] }[] = [];
+                let currentMonth = "";
+                
+                localImages.forEach(img => {
+                  const month = getMonthKey(img.createdAt);
+                  if (month !== currentMonth) {
+                    currentMonth = month;
+                    groups.push({ month, images: [img] });
+                  } else {
+                    groups[groups.length - 1].images.push(img);
+                  }
+                });
+                
+                return groups.map((group, groupIndex) => (
+                  <div key={group.month + groupIndex}>
+                    {/* 月份标题 */}
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className={cn(
+                        "w-3 h-3 rounded-full",
+                        isDark ? "bg-[var(--neon-cyan)]" : "bg-blue-500"
+                      )} />
+                      <h2 className={cn("text-xl font-bold", isDark ? "text-white" : "text-gray-900")}>
+                        {group.month}
+                      </h2>
+                      <span className={cn(
+                        "text-sm px-2 py-0.5 rounded-full font-medium",
+                        isDark ? "bg-white/10 text-white/50" : "bg-gray-200 text-gray-600"
+                      )}>
+                        {group.images.length} 张
+                      </span>
+                    </div>
+                    
+                    {/* 图片网格 */}
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                      {group.images.map((image, index) => (
+                        <SortableImageCard
+                          key={image.id}
+                          image={image}
+                          isDark={isDark}
+                          index={index}
+                          onClick={() => setSelectedImage(image)}
+                          onDelete={() => handleDelete(image.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
 
       {/* Lightbox 预览 */}
@@ -420,9 +438,9 @@ const EmptyState = memo(function EmptyState({
   );
 });
 
-// ============ 图片卡片组件 ============
+// ============ 可拖拽图片卡片 ============
 
-const ImageCard = memo(function ImageCard({
+const SortableImageCard = memo(function SortableImageCard({
   image,
   isDark,
   index,
@@ -434,6 +452,53 @@ const ImageCard = memo(function ImageCard({
   index: number;
   onClick: () => void;
   onDelete: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: image.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : undefined,
+    opacity: isDragging ? 0.8 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <ImageCard
+        image={image}
+        isDark={isDark}
+        index={index}
+        onClick={onClick}
+        onDelete={onDelete}
+        isDragging={isDragging}
+      />
+    </div>
+  );
+});
+
+// ============ 图片卡片组件 ============
+
+const ImageCard = memo(function ImageCard({
+  image,
+  isDark,
+  index,
+  onClick,
+  onDelete,
+  isDragging = false,
+}: {
+  image: PlanImage;
+  isDark: boolean;
+  index: number;
+  onClick: () => void;
+  onDelete: () => void;
+  isDragging?: boolean;
 }) {
   const { data: imageSrc } = useImageSrc(image.imagePath);
   const { language } = useLanguage();
@@ -457,11 +522,13 @@ const ImageCard = memo(function ImageCard({
       exit={{ opacity: 0, y: -20 }}
       transition={{ delay: index * 0.03, duration: 0.3 }}
       className={cn(
-        "group relative rounded-xl overflow-hidden cursor-pointer",
+        "group relative rounded-xl overflow-hidden",
         "transition-all duration-300",
+        isDragging ? "cursor-grabbing" : "cursor-grab",
         isDark 
           ? "bg-[#1a1a1f] hover:shadow-[0_8px_30px_rgba(34,211,238,0.15)]" 
-          : "bg-white hover:shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+          : "bg-white hover:shadow-[0_8px_30px_rgba(0,0,0,0.12)]",
+        isDragging && "ring-2 ring-[var(--neon-cyan)] shadow-lg"
       )}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}

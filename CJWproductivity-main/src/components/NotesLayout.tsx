@@ -9,23 +9,28 @@ import {
   Search, 
   FileText,
   Loader2,
-  Maximize2,
-  Minimize2,
-  Eye,
-  Edit3,
-  Download
+  Upload,
+  ArrowLeft,
+  List,
+  RotateCcw,
+  Trash
 } from "lucide-react";
+import { NoteNavigationProvider, useNoteNavigation } from "@/contexts/NoteNavigationContext";
+import { NoteLinkPicker, type NoteLinkSelection } from "@/components/NoteLinkPicker";
+import type { RichTextEditorRef } from "@/components/RichTextEditor";
 import { AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { useFolders, useNotes, useCreateNote, useUpdateNote, useDeleteNote, useCreateFolder, useDeleteFolder } from "@/hooks/useNotes";
+import { useFolders, useNotes, useCreateNote, useUpdateNote, useDeleteNote, useCreateFolder, useDeleteFolder, useRestoreNote, usePermanentDeleteNote, useEmptyTrash, useAutoCleanupNotes } from "@/hooks/useNotes";
 import type { Note, Folder as FolderType } from "@/lib/notes";
-import { GlassPanel, SpotlightCard, NeonInput, LivelyIcon } from "@/components/ui/visual-effects";
+import { GlassPanel, SpotlightCard, NeonInput } from "@/components/ui/visual-effects";
 import { extractH1Title, stripHtml } from "@/utils";
-import { exportNote, exportFormats, type ExportFormat } from "@/utils/noteExport";
+import { NoteEditorToolbar, TableOfContents } from "@/components/notes";
+import { importFile, ACCEPT_FILE_TYPES } from "@/lib/note-import";
 import { getRelativeTime } from "@/utils/timeUtils";
 import { toast } from "@/hooks/useToast";
+import { useTableOfContents } from "@/hooks/useTableOfContents";
 
 // 懒加载重型编辑器组件
 const RichTextEditor = lazy(() => 
@@ -165,25 +170,102 @@ const NoteList = memo(function NoteList({
   activeNoteId, 
   onSelectNote, 
   onCreateNote,
+  onImportNote,
   onMoveNote,
   onTogglePin,
   onDeleteNote,
+  onRestoreNote,
+  onPermanentDelete,
+  onEmptyTrash,
   folders,
-  isDark 
+  isDark,
+  isTrash = false,
 }: { 
   notes: Note[], 
   activeNoteId: number | null, 
   onSelectNote: (note: Note) => void,
   onCreateNote: () => void,
+  onImportNote: (title: string, content: string) => void,
   onMoveNote: (noteId: number, folderId: string) => void,
   onTogglePin: (noteId: number, isPinned: boolean) => void,
   onDeleteNote: (noteId: number) => void,
+  onRestoreNote?: (noteId: number) => void,
+  onPermanentDelete?: (noteId: number) => void,
+  onEmptyTrash?: () => void,
   folders: FolderType[],
-  isDark: boolean 
+  isDark: boolean,
+  isTrash?: boolean,
 }) {
+  // 使用 onEmptyTrash 避免 TS 警告（未来可添加清空回收站按钮）
+  void onEmptyTrash;
   const [search, setSearch] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; note: Note } | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const { t, language } = useLanguage();
+  
+  // 处理文件导入
+  const handleImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    // 立即重置 input，防止卡住
+    const fileList = Array.from(files);
+    if (importInputRef.current) {
+      importInputRef.current.value = "";
+    }
+    
+    // 延迟处理，让文件选择器有时间关闭
+    setTimeout(async () => {
+      setIsImporting(true);
+      let successCount = 0;
+      let failCount = 0;
+      
+      try {
+        for (const file of fileList) {
+          // 让 UI 有机会更新
+          await new Promise(resolve => setTimeout(resolve, 10));
+          
+          const result = await importFile(file);
+          if (result.success) {
+            // 确保内容有 h1 标题
+            let content = result.content;
+            if (!content.includes("<h1")) {
+              content = `<h1>${result.title}</h1>\n${content}`;
+            }
+            await onImportNote(result.title, content);
+            successCount++;
+          } else {
+            console.error("导入失败:", result.error);
+            failCount++;
+          }
+        }
+        
+        // 显示结果
+        if (successCount > 0) {
+          toast({
+            title: "导入成功",
+            description: `成功导入 ${successCount} 个笔记${failCount > 0 ? `，${failCount} 个失败` : ""}`,
+          });
+        } else if (failCount > 0) {
+          toast({
+            title: "导入失败",
+            description: `${failCount} 个文件导入失败`,
+            variant: "destructive",
+          });
+        }
+      } catch (error) {
+        console.error("导入错误:", error);
+        toast({
+          title: "导入错误",
+          description: "文件导入过程中发生错误",
+          variant: "destructive",
+        });
+      } finally {
+        setIsImporting(false);
+      }
+    }, 100); // 延迟 100ms 让文件对话框关闭
+  }, [onImportNote]);
 
   // 关闭右键菜单
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
@@ -249,15 +331,45 @@ const NoteList = memo(function NoteList({
           <span className={cn("text-xs font-medium", isDark ? "text-white/40" : "text-gray-500")}>
             {t("notes.notesCount", { count: filteredNotes.length })}
           </span>
-          <button
-            onClick={onCreateNote}
-            className={cn(
-              "p-1.5 rounded-md transition-colors",
-              isDark ? "hover:bg-white/10 text-[var(--color-memo)]" : "hover:bg-gray-100 text-blue-600"
-            )}
-          >
-            <Plus className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            {/* 导入按钮 */}
+            <button
+              onClick={() => importInputRef.current?.click()}
+              disabled={isImporting}
+              className={cn(
+                "p-1.5 rounded-md transition-colors",
+                isDark ? "hover:bg-white/10 text-white/60 hover:text-white" : "hover:bg-gray-100 text-gray-500 hover:text-gray-700",
+                isImporting && "opacity-50 cursor-not-allowed"
+              )}
+              title="导入文件 (.md, .html, .txt, .docx)"
+            >
+              {isImporting ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Upload className="w-5 h-5" />
+              )}
+            </button>
+            {/* 隐藏的文件输入 */}
+            <input
+              ref={importInputRef}
+              type="file"
+              accept={ACCEPT_FILE_TYPES}
+              multiple
+              onChange={handleImport}
+              className="hidden"
+            />
+            {/* 新建按钮 */}
+            <button
+              onClick={onCreateNote}
+              className={cn(
+                "p-1.5 rounded-md transition-colors",
+                isDark ? "hover:bg-white/10 text-[var(--color-memo)]" : "hover:bg-gray-100 text-blue-600"
+              )}
+              title="新建笔记"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -292,32 +404,24 @@ const NoteList = memo(function NoteList({
               setContextMenu({ x: e.clientX, y: e.clientY, note });
             }}
             className={cn(
-              "cursor-pointer transition-all duration-300 relative overflow-hidden group",
-              // 悬浮效果：轻微上浮 + 阴影加深
-              "hover:-translate-y-0.5 hover:shadow-md",
+              "cursor-pointer transition-all duration-200 relative overflow-hidden group",
+              // 悬浮效果：明显上浮 + 阴影加深
+              "hover:-translate-y-1 hover:shadow-lg",
               activeNoteId === note.id
                 ? isDark 
                   ? "bg-[var(--color-memo)]/10 border-[var(--color-memo)]/30 shadow-[0_0_15px_rgba(0,255,255,0.1)]" 
-                  : "bg-white/90 border-blue-300 shadow-md ring-1 ring-blue-200"
+                  : "bg-slate-50 border-l-[3px] border-l-blue-500 border-t border-r border-b border-slate-200 shadow-sm"
                 : isDark 
                   ? "bg-white/5 border-transparent hover:bg-white/10 hover:border-white/10" 
-                  : "bg-white/60 border-white/40 hover:bg-white/80 hover:border-white/60"
+                  : "bg-white/70 border-slate-100 hover:bg-white hover:border-slate-200 hover:shadow-sm"
             )}
             from={isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.04)"}
           >
-            {/* 选中态：左侧高亮条 + 渐变背景 */}
-            {activeNoteId === note.id && (
+            {/* 选中态装饰（深色主题使用绝对定位高亮条，浅色主题使用 border-l） */}
+            {activeNoteId === note.id && isDark && (
               <>
-                <div className={cn(
-                  "absolute left-0 top-0 bottom-0 w-[3px] transition-colors duration-300",
-                  isDark ? "bg-[var(--color-memo)]" : "bg-blue-500"
-                )} />
-                <div className={cn(
-                  "absolute inset-0 pointer-events-none opacity-20",
-                  isDark 
-                    ? "bg-gradient-to-r from-[var(--color-memo)]/20 to-transparent" 
-                    : "bg-gradient-to-r from-blue-500/10 to-transparent"
-                )} />
+                <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--color-memo)] transition-colors duration-300" />
+                <div className="absolute inset-0 pointer-events-none opacity-20 bg-gradient-to-r from-[var(--color-memo)]/20 to-transparent" />
               </>
             )}
             
@@ -385,61 +489,100 @@ const NoteList = memo(function NoteList({
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {/* 置顶/取消置顶 */}
-          <button
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              onTogglePin(contextMenu.note.id, !contextMenu.note.is_pinned);
-              closeContextMenu();
-            }}
-            className={cn(
-              "w-full px-3 py-2 text-left text-sm flex items-center gap-2 cursor-pointer",
-              isDark ? "hover:bg-white/10 text-white/80" : "hover:bg-gray-100 text-gray-700"
-            )}
-          >
-            {contextMenu.note.is_pinned ? t("notes.unpin") : t("notes.pin")}
-          </button>
+          {isTrash ? (
+            <>
+              {/* 回收站：恢复 */}
+              <button
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  onRestoreNote?.(contextMenu.note.id);
+                  closeContextMenu();
+                }}
+                className={cn(
+                  "w-full px-3 py-2 text-left text-sm flex items-center gap-2 cursor-pointer",
+                  isDark ? "hover:bg-white/10 text-green-400" : "hover:bg-green-50 text-green-600"
+                )}
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                恢复笔记
+              </button>
 
-          {/* 移动到文件夹 */}
-          <div className={cn("border-t my-1", isDark ? "border-white/5" : "border-gray-100")} />
-          <div className={cn("px-3 py-1 text-xs", isDark ? "text-white/30" : "text-gray-400")}>
-            {t("notes.moveTo")}
-          </div>
-          {folders.filter(f => f.id !== "trash").map(folder => (
-            <button
-              key={folder.id}
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                onMoveNote(contextMenu.note.id, folder.id);
-                closeContextMenu();
-              }}
-              className={cn(
-                "w-full px-3 py-2 text-left text-sm flex items-center gap-2 cursor-pointer",
-                contextMenu.note.folder_id === folder.id && (isDark ? "text-[var(--color-memo)]" : "text-blue-600"),
-                isDark ? "hover:bg-white/10 text-white/80" : "hover:bg-gray-100 text-gray-700"
-              )}
-            >
-              <Folder className="w-3.5 h-3.5" />
-              {folder.name}
-            </button>
-          ))}
+              {/* 回收站：永久删除 */}
+              <div className={cn("border-t my-1", isDark ? "border-white/5" : "border-gray-100")} />
+              <button
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  onPermanentDelete?.(contextMenu.note.id);
+                  closeContextMenu();
+                }}
+                className={cn(
+                  "w-full px-3 py-2 text-left text-sm flex items-center gap-2 text-red-500 cursor-pointer",
+                  isDark ? "hover:bg-red-500/10" : "hover:bg-red-50"
+                )}
+              >
+                <Trash className="w-3.5 h-3.5" />
+                永久删除
+              </button>
+            </>
+          ) : (
+            <>
+              {/* 置顶/取消置顶 */}
+              <button
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  onTogglePin(contextMenu.note.id, !contextMenu.note.is_pinned);
+                  closeContextMenu();
+                }}
+                className={cn(
+                  "w-full px-3 py-2 text-left text-sm flex items-center gap-2 cursor-pointer",
+                  isDark ? "hover:bg-white/10 text-white/80" : "hover:bg-gray-100 text-gray-700"
+                )}
+              >
+                {contextMenu.note.is_pinned ? t("notes.unpin") : t("notes.pin")}
+              </button>
 
-          {/* 删除 */}
-          <div className={cn("border-t my-1", isDark ? "border-white/5" : "border-gray-100")} />
-          <button
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              onDeleteNote(contextMenu.note.id);
-              closeContextMenu();
-            }}
-            className={cn(
-              "w-full px-3 py-2 text-left text-sm flex items-center gap-2 text-red-500 cursor-pointer",
-              isDark ? "hover:bg-red-500/10" : "hover:bg-red-50"
-            )}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            {t("notes.deleteNote")}
-          </button>
+              {/* 移动到文件夹 */}
+              <div className={cn("border-t my-1", isDark ? "border-white/5" : "border-gray-100")} />
+              <div className={cn("px-3 py-1 text-xs", isDark ? "text-white/30" : "text-gray-400")}>
+                {t("notes.moveTo")}
+              </div>
+              {folders.filter(f => f.id !== "trash").map(folder => (
+                <button
+                  key={folder.id}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    onMoveNote(contextMenu.note.id, folder.id);
+                    closeContextMenu();
+                  }}
+                  className={cn(
+                    "w-full px-3 py-2 text-left text-sm flex items-center gap-2 cursor-pointer",
+                    contextMenu.note.folder_id === folder.id && (isDark ? "text-[var(--color-memo)]" : "text-blue-600"),
+                    isDark ? "hover:bg-white/10 text-white/80" : "hover:bg-gray-100 text-gray-700"
+                  )}
+                >
+                  <Folder className="w-3.5 h-3.5" />
+                  {folder.name}
+                </button>
+              ))}
+
+              {/* 删除（移到回收站） */}
+              <div className={cn("border-t my-1", isDark ? "border-white/5" : "border-gray-100")} />
+              <button
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  onDeleteNote(contextMenu.note.id);
+                  closeContextMenu();
+                }}
+                className={cn(
+                  "w-full px-3 py-2 text-left text-sm flex items-center gap-2 text-red-500 cursor-pointer",
+                  isDark ? "hover:bg-red-500/10" : "hover:bg-red-50"
+                )}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {t("notes.deleteNote")}
+              </button>
+            </>
+          )}
         </div>,
         document.body
       )}
@@ -469,68 +612,97 @@ const NoteEditor = memo(function NoteEditor({
   onDelete,
   isDark,
   isFullScreen,
-  onToggleFullScreen
+  onToggleFullScreen,
+  onNoteLinkClick,
+  isDualPage,
+  onToggleDualPage,
 }: { 
   note: Note | null, 
   onUpdate: (content: string) => void,
   onDelete: () => void,
   isDark: boolean,
   isFullScreen: boolean,
-  onToggleFullScreen: () => void
+  onToggleFullScreen: () => void,
+  onNoteLinkClick: (noteId: number) => void,
+  isDualPage: boolean,
+  onToggleDualPage: () => void,
 }) {
   const [isEditing, setIsEditing] = useState(true);
-  const [widthPercent, setWidthPercent] = useState(60); // 浏览模式宽度百分比
-  const [isDragging, setIsDragging] = useState(false); // 是否正在拖动滑块
-  const [isExportOpen, setIsExportOpen] = useState(false);
-  const [isExporting, setIsExporting] = useState<ExportFormat | null>(null);
-  const exportRef = useRef<HTMLDivElement>(null);
-  const { t, language } = useLanguage();
-
-  // 移除：切换笔记时重置为编辑模式
-  // 现在的逻辑：保持当前模式（编辑/浏览）不变
-
-  // 点击外部关闭导出菜单
+  const [widthPercent, setWidthPercent] = useState(100);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isLinkPickerOpen, setIsLinkPickerOpen] = useState(false);
+  const [showToc, setShowToc] = useState(false); // 目录面板状态
+  const editorRef = useRef<RichTextEditorRef>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const { t } = useLanguage();
+  const { justNavigated, lastSourceTitle, goBack, clearJustNavigated } = useNoteNavigation();
+  
+  // 目录 Hook
+  const { items: tocItems, activeId, scrollToItem, scrollToTop } = useTableOfContents({
+    containerRef: editorContainerRef,
+    content: note?.content || '',
+    enabled: showToc && !isEditing, // 仅浏览模式启用
+  });
+  
+  // 全屏切换时调整宽度 - 16:9屏幕适配
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
-        setIsExportOpen(false);
-      }
-    };
-    if (isExportOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
+    setWidthPercent(isFullScreen ? 57 : 100);
+  }, [isFullScreen]);
+  
+  // 切换到双屏模式时自动关闭目录
+  useEffect(() => {
+    if (isDualPage && showToc) {
+      setShowToc(false);
     }
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isExportOpen]);
-
-  // 处理导出
-  const handleExport = async (format: ExportFormat) => {
-    if (!note) return;
-    
-    setIsExporting(format);
-    try {
-      console.log("Exporting note:", { id: note.id, title: note.title, contentLength: note.content?.length });
-      const filename = await exportNote(note, format, isDark);
-      toast({ 
-        title: t("notes.exportSuccess"), 
-        description: `📁 ${filename} → ${t("notes.downloadFolder")}`,
-        variant: "success" 
-      });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error("Export failed:", errorMessage, error);
-      toast({ title: `${t("notes.exportFailed")}: ${errorMessage}`, variant: "destructive" });
-    } finally {
-      setIsExporting(null);
-      setIsExportOpen(false);
-    }
-  };
+  }, [isDualPage]);
+  
+  // 处理笔记链接选择
+  const handleNoteLinkSelect = useCallback((selection: NoteLinkSelection) => {
+    editorRef.current?.insertNoteLink(selection.noteId, selection.noteTitle);
+  }, []);
 
   if (!note) {
     return (
-      <div className="flex-1 flex items-center justify-center opacity-30">
-        <div className="text-center">
-          <FileText className="w-16 h-16 mx-auto mb-4" />
-          <p>{t("notes.selectOrCreate")}</p>
+      <div className="flex-1 flex items-center justify-center">
+        <div className={cn(
+          "text-center max-w-xs px-6 py-8 rounded-2xl",
+          isDark 
+            ? "bg-white/5 border border-white/10" 
+            : "bg-gray-50 border border-gray-100"
+        )}>
+          <div className={cn(
+            "w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center",
+            isDark 
+              ? "bg-[var(--neon-cyan)]/10" 
+              : "bg-blue-50"
+          )}>
+            <FileText className={cn(
+              "w-8 h-8",
+              isDark ? "text-[var(--neon-cyan)]" : "text-blue-500"
+            )} />
+          </div>
+          <h3 className={cn(
+            "text-lg font-medium mb-2",
+            isDark ? "text-white/80" : "text-gray-700"
+          )}>
+            {t("notes.selectOrCreate")}
+          </h3>
+          <p className={cn(
+            "text-sm mb-4",
+            isDark ? "text-white/40" : "text-gray-500"
+          )}>
+            {t("notes.emptyHint") || "从左侧选择一篇笔记，或创建新笔记开始记录"}
+          </p>
+          <div className={cn(
+            "flex items-center justify-center gap-2 text-xs",
+            isDark ? "text-white/30" : "text-gray-400"
+          )}>
+            <span className={cn(
+              "px-2 py-1 rounded",
+              isDark ? "bg-white/10" : "bg-gray-100"
+            )}>⌘ N</span>
+            <span>{t("notes.quickCreate") || "快速创建"}</span>
+          </div>
         </div>
       </div>
     );
@@ -538,181 +710,145 @@ const NoteEditor = memo(function NoteEditor({
 
   return (
     <div className="flex-1 flex flex-col h-full transition-colors duration-300">
-      {/* 顶部信息 */}
-      <div className={cn(
-        "flex-none h-14 px-8 flex items-center justify-between transition-all duration-300",
-        // 编辑模式下显示边框，浏览模式下更轻量
-        isEditing
-          ? (isDark ? "border-b border-white/5 bg-[#1a1a1f]" : "border-b border-gray-100 bg-white")
-          : (isDark ? "bg-[#1a1a1f]/50" : "bg-gray-50/50")
-      )}>
-        <div className="flex items-center gap-4">
-          <div className={cn("text-xs", isDark ? "text-white/30" : "text-gray-400")}>
-            {t("notes.lastEdited")}: {getRelativeTime(note.updated_at, language)}
-          </div>
-          <div className={cn("w-px h-3", isDark ? "bg-white/10" : "bg-gray-300")} />
-          <div className={cn("text-xs", isDark ? "text-white/30" : "text-gray-400")}>
-            {note.content.replace(/<[^>]+>/g, "").replace(/\s+/g, "").length} {t("notes.words")}
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          {/* 导出按钮 */}
-          <div ref={exportRef} className="relative">
+      {/* 顶部工具栏 */}
+      <NoteEditorToolbar
+        note={note}
+        isDark={isDark}
+        isEditing={isEditing}
+        onToggleEditing={() => setIsEditing(!isEditing)}
+        isFullScreen={isFullScreen}
+        onToggleFullScreen={onToggleFullScreen}
+        isDualPage={isDualPage}
+        onToggleDualPage={onToggleDualPage}
+        onDelete={onDelete}
+        widthPercent={widthPercent}
+        onWidthChange={setWidthPercent}
+        onDragStart={() => setIsDragging(true)}
+        onDragEnd={() => setIsDragging(false)}
+      />
+
+      {/* 返回条 - 从链接跳转过来时显示 */}
+      <AnimatePresence>
+        {justNavigated && lastSourceTitle && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className={cn(
+              "absolute top-14 left-0 right-0 z-20 flex items-center justify-center px-4 py-2",
+              isDark ? "bg-[var(--neon-cyan)]/10" : "bg-blue-50"
+            )}
+          >
             <button
-              onClick={() => setIsExportOpen(!isExportOpen)}
+              onClick={() => {
+                const entry = goBack();
+                if (entry) {
+                  onNoteLinkClick(entry.noteId);
+                }
+              }}
               className={cn(
-                "p-2 rounded-lg transition-colors",
-                isExportOpen
-                  ? isDark ? "bg-green-500/20 text-green-400" : "bg-green-50 text-green-600"
-                  : isDark ? "hover:bg-white/5 text-white/40" : "hover:bg-gray-100 text-gray-400"
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                isDark 
+                  ? "bg-[var(--neon-cyan)]/20 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/30" 
+                  : "bg-blue-100 text-blue-700 hover:bg-blue-200"
               )}
-              title={t("notes.export")}
             >
-              <Download className="w-4 h-4" />
+              <ArrowLeft className="w-4 h-4" />
+              返回「{lastSourceTitle}」
             </button>
-            
-            <AnimatePresence>
-              {isExportOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: -8, scale: 0.96 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -8, scale: 0.96 }}
-                  transition={{ duration: 0.15 }}
-                  className={cn(
-                    "absolute right-0 top-full mt-1 z-50 min-w-[160px] rounded-lg border shadow-xl overflow-hidden",
-                    isDark 
-                      ? "bg-[#1a1a1f] border-white/10" 
-                      : "bg-white border-gray-200"
-                  )}
-                >
-                  <div className={cn(
-                    "px-3 py-2 text-xs font-medium border-b",
-                    isDark ? "text-white/40 border-white/5" : "text-gray-400 border-gray-100"
-                  )}>
-                    {t("notes.exportAs")}
-                  </div>
-                  {exportFormats.map((format) => (
-                    <button
-                      key={format.value}
-                      onClick={() => handleExport(format.value)}
-                      disabled={isExporting !== null}
-                      className={cn(
-                        "w-full px-3 py-2.5 text-sm text-left transition-colors flex items-center gap-3",
-                        isDark 
-                          ? "text-white/80 hover:bg-white/5" 
-                          : "text-gray-700 hover:bg-gray-50",
-                        isExporting === format.value && "opacity-50"
-                      )}
-                    >
-                      <span className="text-base">{format.icon}</span>
-                      <span className="flex-1">{format.label}</span>
-                      <span className={cn(
-                        "text-xs",
-                        isDark ? "text-white/30" : "text-gray-400"
-                      )}>
-                        {format.ext}
-                      </span>
-                      {isExporting === format.value && (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      )}
-                    </button>
-                  ))}
-                </motion.div>
+            <button
+              onClick={clearJustNavigated}
+              className={cn(
+                "ml-2 p-1 rounded transition-colors",
+                isDark ? "text-white/40 hover:text-white/60" : "text-gray-400 hover:text-gray-600"
               )}
-            </AnimatePresence>
-          </div>
-
-          {/* 浏览模式：宽度调节滑块 - 放在最左边 */}
-          {!isEditing && (
-            <>
-              <div className="flex items-center mx-1 group relative" title="阅读宽度">
-                <input
-                  type="range"
-                  min="30"
-                  max="100"
-                  value={widthPercent}
-                  onChange={(e) => setWidthPercent(Number(e.target.value))}
-                  onPointerDown={() => setIsDragging(true)}
-                  onPointerUp={() => setIsDragging(false)}
-                  className={cn(
-                    "w-20 h-1.5 rounded-lg appearance-none cursor-pointer",
-                    isDark 
-                      ? "bg-white/10 accent-cyan-500" 
-                      : "bg-gray-300 accent-cyan-600"
-                  )}
-                />
-              </div>
-              <div className={cn("w-px h-4 mx-1", isDark ? "bg-white/10" : "bg-gray-200")} />
-            </>
-          )}
-
-          {/* 模式切换 */}
-          <button
-            onClick={() => setIsEditing(!isEditing)}
-            className={cn(
-              "p-2 rounded-lg transition-colors",
-              isEditing 
-                ? isDark ? "bg-blue-500/20 text-blue-400" : "bg-blue-50 text-blue-600"
-                : isDark ? "hover:bg-white/5 text-white/40" : "hover:bg-gray-100 text-gray-400"
-            )}
-            title={isEditing ? t("notes.view") : t("notes.edit")}
-          >
-            {isEditing ? <Edit3 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-
-          {/* 全屏切换 */}
-          <button
-            onClick={onToggleFullScreen}
-            className={cn(
-              "p-2 rounded-lg transition-colors",
-              isDark ? "hover:bg-white/5 text-white/40" : "hover:bg-gray-100 text-gray-400"
-            )}
-            title={isFullScreen ? t("notes.exitFullscreen") : t("notes.fullscreen")}
-          >
-            {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-          </button>
-
-          <div className={cn("w-px h-4 mx-1", isDark ? "bg-white/10" : "bg-gray-200")} />
-
-          <button 
-            onClick={onDelete}
-            className={cn(
-              "p-2 rounded-lg transition-colors group",
-              isDark ? "hover:bg-red-500/10 text-white/40 hover:text-red-400" : "hover:bg-red-50 text-gray-400 hover:text-red-500"
-            )}
-            title={t("notes.deleteNote")}
-          >
-            <LivelyIcon animation="shake">
-              <Trash2 className="w-4 h-4" />
-            </LivelyIcon>
-          </button>
-        </div>
-      </div>
+            >
+              ✕
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 编辑器容器 - 使用 Suspense 懒加载 */}
-      <div className="flex-1 overflow-hidden relative">
-        <Suspense fallback={<EditorSkeleton isDark={isDark} />}>
-          <RichTextEditor
-            key={note.id}
-            content={note.content}
-            onChange={onUpdate}
-            isDark={isDark}
-            editable={isEditing}
-            maxWidth={`${widthPercent}%`}
-            disableTransition={isDragging}
-          />
-        </Suspense>
+      <div className="flex-1 overflow-hidden relative flex">
+        {/* 目录面板（左侧） */}
+        <AnimatePresence>
+          {showToc && !isEditing && !isDualPage && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 260, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className={cn(
+                "h-full border-r overflow-hidden flex-shrink-0",
+                isDark ? "bg-[#16161a] border-white/10" : "bg-gray-50 border-gray-200"
+              )}
+            >
+              <TableOfContents
+                items={tocItems}
+                activeId={activeId}
+                onItemClick={scrollToItem}
+                onScrollToTop={scrollToTop}
+                onClose={() => setShowToc(false)}
+                isDark={isDark}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+        
+        {/* 主编辑区 */}
+        <div ref={editorContainerRef} className="flex-1 overflow-hidden relative">
+          <Suspense fallback={<EditorSkeleton isDark={isDark} />}>
+            <RichTextEditor
+              ref={editorRef}
+              key={note.id}
+              content={note.content}
+              onChange={onUpdate}
+              isDark={isDark}
+              editable={isEditing}
+              maxWidth={isDualPage && isFullScreen ? "100%" : `${widthPercent}%`}
+              disableTransition={isDragging}
+              onOpenNoteLinkPicker={() => setIsLinkPickerOpen(true)}
+              onNoteLinkClick={onNoteLinkClick}
+              isDualPage={isDualPage && isFullScreen}
+            />
+          </Suspense>
+          
+          {/* 目录切换按钮（浏览模式下，目录隐藏时显示） */}
+          {!isEditing && !isDualPage && !showToc && (
+            <button
+              onClick={() => setShowToc(true)}
+              className={cn(
+                "absolute left-4 top-4 z-30 p-2 rounded-lg transition-all duration-200",
+                isDark 
+                  ? "bg-white/10 text-white/60 hover:text-white hover:bg-white/20" 
+                  : "bg-gray-100 text-gray-500 hover:text-gray-700 hover:bg-gray-200"
+              )}
+              title="显示目录"
+            >
+              <List className="w-5 h-5" />
+            </button>
+          )}
+        </div>
       </div>
+      
+      {/* 笔记链接选择器 */}
+      <NoteLinkPicker
+        isOpen={isLinkPickerOpen}
+        onClose={() => setIsLinkPickerOpen(false)}
+        onSelect={handleNoteLinkSelect}
+        currentNoteId={note.id}
+      />
     </div>
   );
 });
 
-// 主布局组件
-export const NotesLayout = memo(function NotesLayout() {
+// 内部布局组件（需要在 Provider 内部使用 navigation context）
+const NotesLayoutInner = memo(function NotesLayoutInner() {
   const [activeFolder, setActiveFolder] = useState("all");
   const [activeNoteId, setActiveNoteId] = useState<number | null>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isDualPage, setIsDualPage] = useState(false);
   
   const { theme } = useTheme();
   const isDark = theme === "dark";
@@ -722,11 +858,26 @@ export const NotesLayout = memo(function NotesLayout() {
   const createNote = useCreateNote();
   const updateNote = useUpdateNote();
   const deleteNote = useDeleteNote();
+  const restoreNote = useRestoreNote();
+  const permanentDelete = usePermanentDeleteNote();
+  const emptyTrash = useEmptyTrash();
   const createFolderMutation = useCreateFolder();
   const deleteFolderMutation = useDeleteFolder();
+  const { navigateTo } = useNoteNavigation();
+  
+  // 启动时自动清理7天前删除的笔记
+  useAutoCleanupNotes();
   
   // 防抖计时器
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+
+  // 退出全屏时自动关闭双页模式
+  useEffect(() => {
+    if (!isFullScreen && isDualPage) {
+      setIsDualPage(false);
+    }
+  }, [isFullScreen, isDualPage]);
 
   const activeNote = useMemo(() => 
     notes.find(n => n.id === activeNoteId) || null, 
@@ -772,6 +923,21 @@ export const NotesLayout = memo(function NotesLayout() {
       folder_id: activeFolder,
     });
     setActiveNoteId(newNote.id);
+  }, [createNote, activeFolder]);
+  
+  // 导入笔记
+  const handleImportNote = useCallback(async (_title: string, content: string) => {
+    try {
+      const newNote = await createNote.mutateAsync({
+        content,
+        folder_id: activeFolder,
+      });
+      // 等待一帧确保 React Query 缓存已刷新
+      await new Promise(resolve => setTimeout(resolve, 100));
+      setActiveNoteId(newNote.id);
+    } catch (error) {
+      console.error("导入笔记失败:", error);
+    }
   }, [createNote, activeFolder]);
   
   const handleDeleteNote = useCallback(async () => {
@@ -838,6 +1004,24 @@ export const NotesLayout = memo(function NotesLayout() {
     }
   }, [deleteNote, activeNoteId]);
 
+  // 处理笔记链接点击（从浏览模式跳转到另一个笔记）
+  const handleNoteLinkClick = useCallback((targetNoteId: number) => {
+    if (!activeNote) return;
+    
+    // 获取当前滚动位置
+    const scrollPosition = editorContainerRef.current?.scrollTop || 0;
+    
+    // 获取当前笔记标题
+    const currentTitle = extractH1Title(activeNote.content) || stripHtml(activeNote.content).slice(0, 20) || "无标题";
+    
+    // 记录导航并跳转
+    navigateTo(targetNoteId, activeNote.id, scrollPosition, currentTitle);
+    
+    // 切换到目标笔记（如果在不同文件夹，先切换到"全部"）
+    setActiveFolder("all");
+    setActiveNoteId(targetNoteId);
+  }, [activeNote, navigateTo]);
+
   return (
     <div className="h-full flex overflow-hidden">
       <motion.div
@@ -863,23 +1047,50 @@ export const NotesLayout = memo(function NotesLayout() {
             activeNoteId={activeNoteId}
             onSelectNote={handleSelectNote}
             onCreateNote={handleCreateNote}
+            onImportNote={handleImportNote}
             onMoveNote={handleMoveNoteToFolder}
             onTogglePin={handleTogglePin}
             onDeleteNote={handleDeleteNoteById}
+            onRestoreNote={(id) => restoreNote.mutate(id)}
+            onPermanentDelete={(id) => permanentDelete.mutate(id)}
+            onEmptyTrash={() => emptyTrash.mutate()}
             folders={folders}
             isDark={isDark}
+            isTrash={activeFolder === "trash"}
           />
         </div>
       </motion.div>
 
-      <NoteEditor 
-        note={activeNote}
-        onUpdate={handleUpdateContent}
-        onDelete={handleDeleteNote}
-        isDark={isDark}
-        isFullScreen={isFullScreen}
-        onToggleFullScreen={() => setIsFullScreen(!isFullScreen)}
-      />
+      <div ref={editorContainerRef} className="flex-1 flex flex-col overflow-hidden">
+        <NoteEditor 
+          note={activeNote}
+          onUpdate={handleUpdateContent}
+          onDelete={handleDeleteNote}
+          isDark={isDark}
+          isFullScreen={isFullScreen}
+          onToggleFullScreen={() => {
+            if (isFullScreen && isDualPage) {
+              // 退出全屏时，先关闭双页模式，等动画完成后再退出全屏
+              setIsDualPage(false);
+              setTimeout(() => setIsFullScreen(false), 300);
+            } else {
+              setIsFullScreen(!isFullScreen);
+            }
+          }}
+          onNoteLinkClick={handleNoteLinkClick}
+          isDualPage={isDualPage}
+          onToggleDualPage={() => setIsDualPage(!isDualPage)}
+        />
+      </div>
     </div>
+  );
+});
+
+// 主布局组件（包裹 Provider）
+export const NotesLayout = memo(function NotesLayout() {
+  return (
+    <NoteNavigationProvider>
+      <NotesLayoutInner />
+    </NoteNavigationProvider>
   );
 });

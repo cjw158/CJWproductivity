@@ -16,18 +16,17 @@
         "label": "splash",
         "title": "CJWproductivity",
         "url": "/#splash",
-        "width": 280,
-        "height": 220,
+        "width": 200,
+        "height": 200,
         "resizable": false,
         "fullscreen": false,
         "decorations": false,
-        "transparent": false,
+        "transparent": true,
         "center": true,
         "alwaysOnTop": true,
         "visible": false,
         "skipTaskbar": true,
-        "focus": true,
-        "backgroundColor": "#0f0f14"
+        "focus": true
       },
       {
         "label": "main",

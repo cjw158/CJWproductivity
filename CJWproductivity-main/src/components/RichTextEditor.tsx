@@ -6,10 +6,11 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Highlight from "@tiptap/extension-highlight";
-import { Image } from "@/lib/tiptap-extensions";
+import { Image, HeadingWithId } from "@/lib/tiptap-extensions";
 import { MathInline, MathBlock, MathPasteHandler } from "@/lib/tiptap-math";
+import { NoteLink } from "@/lib/tiptap-notelink";
 import "katex/dist/katex.min.css";
-import { forwardRef, useImperativeHandle, useCallback, useEffect, useRef } from "react";
+import { forwardRef, useImperativeHandle, useCallback, useEffect, useRef, useState } from "react";
 import {
   Bold,
   Italic,
@@ -29,8 +30,11 @@ import {
   Undo,
   Redo,
   Image as ImageIcon,
+  FileText,
+  ListTree,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getDualPageContentStyles, getMeasureContainerStyles } from "@/lib/editor-styles";
 
 interface RichTextEditorProps {
   content: string;
@@ -39,6 +43,11 @@ interface RichTextEditorProps {
   editable?: boolean;
   maxWidth?: number | string;
   disableTransition?: boolean;
+  // 笔记链接功能
+  onOpenNoteLinkPicker?: () => void;  // 打开笔记链接选择器
+  onNoteLinkClick?: (noteId: number) => void;  // 点击笔记链接时的回调
+  // 双页模式
+  isDualPage?: boolean;
 }
 
 export interface RichTextEditorRef {
@@ -46,6 +55,7 @@ export interface RichTextEditorRef {
   getHTML: () => string;
   focus: () => void;
   getWordCount: () => number;
+  insertNoteLink: (noteId: number, noteTitle: string) => void;
 }
 
 // 工具栏按钮组件
@@ -94,17 +104,31 @@ function Divider({ isDark }: { isDark: boolean }) {
 }
 
 export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(
-  function RichTextEditor({ content, onChange, isDark, editable = true, maxWidth = "48rem", disableTransition = false }, ref) {
+  function RichTextEditor({ 
+    content, 
+    onChange, 
+    isDark, 
+    editable = true, 
+    maxWidth = "48rem", 
+    disableTransition = false,
+    onOpenNoteLinkPicker,
+    onNoteLinkClick,
+    isDualPage = false,
+  }, ref) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const isSyncingRef = useRef(false); // 标记是否正在同步内容（非用户编辑）
     const initialContentRef = useRef(content); // 记录初始内容
+    const editorContainerRef = useRef<HTMLDivElement>(null); // 编辑器容器引用
+    const currentScrollRef = useRef(0); // 记录当前滚动位置（用于模式切换）
 
     const editor = useEditor({
+      immediatelyRender: false, // 避免 React Strict Mode 下的重复扩展警告
       extensions: [
         StarterKit.configure({
-          heading: {
-            levels: [1, 2, 3],
-          },
+          heading: false, // 禁用默认 heading，使用自定义的 HeadingWithId
+        }),
+        HeadingWithId.configure({
+          levels: [1, 2, 3],
         }),
         Underline,
         Highlight.configure({
@@ -131,6 +155,8 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
         MathInline,
         MathBlock,
         MathPasteHandler,
+        // 笔记链接
+        NoteLink,
       ],
       content,
       editable,
@@ -162,7 +188,12 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
                isDark ? "text-gray-200" : "text-gray-700", // 提高对比度
                "font-['LXGW_WenKai_Screen','LXGW_WenKai',serif]", // 应用霞鹜文楷字体
                "tracking-wide", // 增加字间距，更有呼吸感
-               "selection:bg-cyan-500/30" // 选中文字高亮
+               "selection:bg-cyan-500/30", // 选中文字高亮
+               
+               // 代码块样式优化
+               isDark 
+                 ? "prose-pre:bg-[#1e1e2e] prose-pre:text-gray-100 prose-pre:border prose-pre:border-white/10" 
+                 : "prose-pre:bg-gray-100 prose-pre:text-gray-800 prose-pre:border prose-pre:border-gray-200"
             ],
             
             // 标题
@@ -185,6 +216,8 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
             isDark
               ? "prose-blockquote:border-white/20 prose-blockquote:text-white/60"
               : "prose-blockquote:border-gray-300 prose-blockquote:text-gray-600",
+            // 代码块默认样式（非浏览模式）
+            isDark ? "prose-pre:bg-[#1e1e2e]" : "prose-pre:bg-gray-50 prose-pre:text-gray-800",
             // 链接
             "prose-a:text-[var(--color-memo)] prose-a:no-underline hover:prose-a:underline",
             // 图片
@@ -230,6 +263,18 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
       }
     }, [editor, editable]);
 
+    // 监听模式切换，恢复滚动位置
+    useEffect(() => {
+      if (!isDualPage && editorContainerRef.current) {
+        // 这里的 setTimeout 是为了确保 DOM 已经渲染完成
+        setTimeout(() => {
+          if (editorContainerRef.current) {
+            editorContainerRef.current.scrollTop = currentScrollRef.current;
+          }
+        }, 0);
+      }
+    }, [isDualPage]);
+
     useImperativeHandle(ref, () => ({
       getMarkdown: () => editor?.getText() || "",
       getHTML: () => editor?.getHTML() || "",
@@ -238,6 +283,9 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
         const text = editor?.getText() || "";
         // 简单的字数统计：中文算一个字，英文单词算一个词
         return text.replace(/\s+/g, "").length;
+      },
+      insertNoteLink: (noteId: number, noteTitle: string) => {
+        editor?.chain().focus().insertNoteLink({ noteId, noteTitle }).run();
       },
     }));
 
@@ -271,6 +319,101 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+    }, [editor]);
+
+    // 生成目录功能（智能版）
+    const generateTableOfContents = useCallback(() => {
+      if (!editor) return;
+      
+      const content = editor.getHTML();
+      
+      // 1. 检测是否已有目录（自动更新，无需确认）
+      const hasToc = /<p[^>]*>\s*<strong>\s*目录\s*<\/strong>\s*<\/p>/i.test(content);
+      
+      // 使用 DOM 解析来处理
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(content, 'text/html');
+      
+      // 2. 提取所有标题并添加 ID
+      const headings: { level: number; text: string; id: string }[] = [];
+      const headingElements = doc.querySelectorAll('h1, h2, h3');
+      let counter = 0;
+      
+      headingElements.forEach((el) => {
+        const text = (el.textContent || '').trim();
+        
+        // 跳过目录标题本身
+        if (text === '目录' || !text) return;
+        
+        const level = parseInt(el.tagName[1]);
+        counter++;
+        
+        // 生成稳定的 ID
+        const id = el.id || `heading-${counter}`;
+        
+        // 给标题设置 ID
+        if (!el.id) {
+          el.id = id;
+        }
+        
+        headings.push({ level, text, id });
+      });
+      
+      if (headings.length === 0) {
+        alert('未找到标题，请先添加 H1/H2/H3 标题');
+        return;
+      }
+      
+      // 3. 移除旧目录
+      if (hasToc) {
+        const tocTitle = doc.querySelector('p strong');
+        if (tocTitle && tocTitle.textContent?.trim() === '目录') {
+          const tocP = tocTitle.parentElement;
+          let nextEl = tocP?.nextElementSibling;
+          
+          // 删除目录标题
+          tocP?.remove();
+          
+          // 删除目录列表和分割线
+          while (nextEl) {
+            const toRemove = nextEl;
+            nextEl = nextEl.nextElementSibling;
+            if (toRemove.tagName === 'HR') {
+              toRemove.remove();
+              break;
+            }
+            toRemove.remove();
+          }
+        }
+      }
+      
+      // 4. 生成分级样式目录 HTML
+      let tocHtml = '<p><strong>目录</strong></p>';
+      tocHtml += '<ul class="toc-list">';
+      headings.forEach(h => {
+        const style = h.level === 1 
+          ? 'font-weight: 600;' 
+          : h.level === 2 
+            ? 'font-weight: 500;' 
+            : 'font-weight: 400; opacity: 0.9;';
+        const indent = (h.level - 1) * 1.25;
+        tocHtml += `<li style="margin-left: ${indent}em; ${style}"><a href="#${h.id}">${h.text}</a></li>`;
+      });
+      tocHtml += '</ul><hr/>';
+      
+      // 5. 获取更新后的内容
+      let updatedContent = doc.body.innerHTML;
+      
+      // 6. 智能插入位置：在第一个 H1 后插入
+      const firstH1Match = updatedContent.match(/<h1[^>]*>[\s\S]*?<\/h1>/i);
+      if (firstH1Match) {
+        const insertPos = updatedContent.indexOf(firstH1Match[0]) + firstH1Match[0].length;
+        updatedContent = updatedContent.slice(0, insertPos) + '\n' + tocHtml + updatedContent.slice(insertPos);
+      } else {
+        updatedContent = tocHtml + updatedContent;
+      }
+      
+      editor.commands.setContent(updatedContent);
     }, [editor]);
 
     if (!editor) return null;
@@ -444,6 +587,13 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
             >
               <LinkIcon className="w-4 h-4" />
             </ToolbarButton>
+            <ToolbarButton
+              onClick={generateTableOfContents}
+              title="生成目录"
+              isDark={isDark}
+            >
+              <ListTree className="w-4 h-4" />
+            </ToolbarButton>
             
             {/* 图片上传 */}
             <ToolbarButton
@@ -460,30 +610,449 @@ export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>
               accept="image/*"
               className="hidden" 
             />
+            
+            {/* 笔记链接 */}
+            {onOpenNoteLinkPicker && (
+              <ToolbarButton
+                onClick={onOpenNoteLinkPicker}
+                title="插入笔记链接"
+                isDark={isDark}
+              >
+                <FileText className="w-4 h-4" />
+              </ToolbarButton>
+            )}
           </div>
         </div>
 
-        {/* 编辑器内容区 */}
-        <div className={cn(
-          "flex-1 overflow-auto transition-all duration-300",
-          "notes-scrollbar", // 自定义滚动条
-          // 浏览模式下居中显示
-          !editable && "flex justify-center items-start px-6 py-4"
-        )}>
+        {/* 编辑器内容区 - 普通模式 */}
+        {!isDualPage && (
           <div 
+            ref={editorContainerRef}
             className={cn(
-              !disableTransition && "transition-all duration-300",
-              // 编辑模式：全宽
-              editable && "w-full",
-              // 浏览模式：限制宽度 + 玻璃面板效果 + 居中
-              !editable && "w-full py-8 px-8 notes-reading-panel"
+              "flex-1 overflow-auto transition-all duration-300",
+              "notes-scrollbar",
+              !editable && "flex justify-center items-start px-6 py-4"
             )}
-            style={{ maxWidth: !editable ? maxWidth : "100%" }}
+            onScroll={(e) => {
+              // 记录单页模式下的滚动位置
+              currentScrollRef.current = e.currentTarget.scrollTop;
+            }}
+            onClickCapture={(e) => {
+              const target = e.target as HTMLElement;
+              
+              // 1. 处理笔记链接（span.note-link）
+              const noteLink = target.closest('.note-link');
+              if (noteLink && !editable && onNoteLinkClick) {
+                e.preventDefault();
+                e.stopPropagation();
+                const noteId = noteLink.getAttribute('data-note-id');
+                if (noteId) {
+                  onNoteLinkClick(parseInt(noteId, 10));
+                }
+                return;
+              }
+              
+              // 2. 处理普通链接
+              const link = target.closest('a');
+              if (!link) return;
+              
+              const href = link.getAttribute('href');
+              if (!href) return;
+              
+              // 阻止默认行为
+              e.preventDefault();
+              e.stopPropagation();
+              
+              // 提取锚点 ID
+              let anchorId = '';
+              if (href.startsWith('#')) {
+                anchorId = href.slice(1);
+              } else if (href.includes('#')) {
+                anchorId = href.split('#')[1];
+              }
+              
+              // 浏览模式下执行跳转
+              if (!editable && anchorId && editorContainerRef.current) {
+                let targetElement = editorContainerRef.current.querySelector(`[id="${anchorId}"]`) ||
+                                    editorContainerRef.current.querySelector(`[id="${decodeURIComponent(anchorId)}"]`);
+                
+                if (!targetElement) {
+                  const headings = editorContainerRef.current.querySelectorAll('h1, h2, h3, h4, h5, h6');
+                  for (const heading of headings) {
+                    const text = heading.textContent?.trim() || '';
+                    if (encodeURIComponent(text).replace(/%20/g, '-') === anchorId ||
+                        text === decodeURIComponent(anchorId)) {
+                      targetElement = heading;
+                      break;
+                    }
+                  }
+                }
+                
+                if (targetElement) {
+                  targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  targetElement.classList.add('anchor-highlight');
+                  setTimeout(() => targetElement?.classList.remove('anchor-highlight'), 2000);
+                }
+              }
+            }}
           >
-            <EditorContent editor={editor} />
+            <div 
+              className={cn(
+                !disableTransition && "transition-all duration-300",
+                editable && "w-full",
+                !editable && "w-full py-8 px-8 notes-reading-panel"
+              )}
+              style={{ maxWidth: !editable ? maxWidth : "100%" }}
+            >
+              <EditorContent editor={editor} />
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* 双页模式 */}
+        {isDualPage && editor && (
+          <DualPageReader
+            html={editor.getHTML()}
+            isDark={isDark}
+            editable={editable}
+            onNoteLinkClick={onNoteLinkClick}
+            initialScrollOffset={currentScrollRef.current}
+            onScrollChange={(offset) => {
+              currentScrollRef.current = offset;
+            }}
+          />
+        )}
       </div>
     );
   }
 );
+
+// ========== 双页阅读器组件 ==========
+interface DualPageReaderProps {
+  html: string;
+  isDark: boolean;
+  editable: boolean; // 编辑模式 vs 浏览模式
+  onNoteLinkClick?: (noteId: number) => void;
+  initialScrollOffset?: number;
+  onScrollChange?: (offset: number) => void;
+}
+
+function DualPageReader({ html, isDark, editable, onNoteLinkClick, initialScrollOffset = 0, onScrollChange }: DualPageReaderProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [scrollOffset, setScrollOffset] = useState(initialScrollOffset);
+  const [pageHeight, setPageHeight] = useState(0);
+  const [maxScroll, setMaxScroll] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartY = useRef(0);
+  const dragStartScroll = useRef(0);
+
+  // 通知父组件滚动位置变更
+  useEffect(() => {
+    onScrollChange?.(scrollOffset);
+  }, [scrollOffset, onScrollChange]);
+
+  // 测量内容高度
+  useEffect(() => {
+    const measure = () => {
+      if (!measureRef.current || !containerRef.current) return;
+      
+      const containerHeight = containerRef.current.clientHeight;
+      const currentContentHeight = measureRef.current.scrollHeight;
+      
+      setPageHeight(containerHeight);
+      setContentHeight(currentContentHeight);
+      // 最大滚动量 = 内容高度 - 一页高度（确保右页有内容显示）
+      setMaxScroll(Math.max(0, currentContentHeight - containerHeight));
+    };
+
+    measure();
+    const timer = setTimeout(measure, 100);
+    
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('resize', measure);
+      clearTimeout(timer);
+    };
+  }, [html]);
+
+  // 处理滚动条拖拽
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      e.preventDefault();
+      if (!maxScroll || !pageHeight) return;
+
+      // 计算滑块移动的距离
+      const deltaY = e.clientY - dragStartY.current;
+      
+      // 计算对应的滚动距离
+      // thumbTop / (pageHeight - thumbHeight) = scrollOffset / maxScroll
+      // deltaY / (pageHeight - thumbHeight) = deltaScroll / maxScroll
+      // => deltaScroll = deltaY * maxScroll / (pageHeight - thumbHeight)
+      
+      // 重新计算 thumbHeight
+      const thumbHeight = Math.max(40, (pageHeight / contentHeight) * pageHeight);
+      const trackHeight = pageHeight - thumbHeight;
+      
+      if (trackHeight <= 0) return;
+
+      const deltaScroll = (deltaY / trackHeight) * maxScroll;
+      const newScroll = Math.max(0, Math.min(dragStartScroll.current + deltaScroll, maxScroll));
+      
+      setScrollOffset(newScroll);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.userSelect = '';
+    };
+  }, [isDragging, maxScroll, pageHeight, contentHeight]);
+
+  const handleThumbMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+    dragStartY.current = e.clientY;
+    dragStartScroll.current = scrollOffset;
+  };
+
+  const handleTrackClick = (e: React.MouseEvent) => {
+    if (!maxScroll || !pageHeight) return;
+    // 简单的点击跳转：点击位置比例 -> 滚动比例
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickY = e.clientY - rect.top;
+    const ratio = Math.max(0, Math.min(1, clickY / pageHeight));
+    setScrollOffset(ratio * maxScroll);
+  };
+
+  // 键盘滚动
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const step = pageHeight * 0.15; // 每次滚动15%页面高度
+      const bigStep = pageHeight * 0.8; // 大步滚动80%
+      
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        setScrollOffset(s => Math.min(s + step, maxScroll));
+      } else if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        setScrollOffset(s => Math.max(0, s - step));
+      } else if (e.key === 'PageDown' || e.key === ' ') {
+        e.preventDefault();
+        setScrollOffset(s => Math.min(s + bigStep, maxScroll));
+      } else if (e.key === 'PageUp') {
+        e.preventDefault();
+        setScrollOffset(s => Math.max(0, s - bigStep));
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        setScrollOffset(0);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        setScrollOffset(maxScroll);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pageHeight, maxScroll]);
+
+  // 滚轮连续滚动
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY * 0.5; // 降低灵敏度
+    setScrollOffset(s => Math.max(0, Math.min(s + delta, maxScroll)));
+  }, [maxScroll]);
+
+  // 处理链接点击
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    
+    // 1. 处理笔记链接
+    const noteLink = target.closest('.note-link');
+    if (noteLink && onNoteLinkClick) {
+      const noteId = noteLink.getAttribute('data-note-id');
+      if (noteId) {
+        e.preventDefault();
+        e.stopPropagation();
+        onNoteLinkClick(parseInt(noteId, 10));
+        return;
+      }
+    }
+    
+    // 2. 处理所有链接 - 阻止默认跳转
+    const link = target.closest('a');
+    if (link && !noteLink) {
+      const href = link.getAttribute('href');
+      if (!href) return;
+      
+      // 始终阻止链接默认行为
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // 提取锚点 ID（支持 #anchor 和 https://...#anchor 格式）
+      let anchorId = '';
+      if (href.startsWith('#')) {
+        anchorId = href.slice(1);
+      } else if (href.includes('#')) {
+        anchorId = href.split('#')[1];
+      }
+      
+      // 如果有锚点，执行跳转
+      if (anchorId && measureRef.current) {
+        // 多种方式查找目标元素
+        let targetElement = measureRef.current.querySelector(`[id="${anchorId}"]`) ||
+                            measureRef.current.querySelector(`[id="${decodeURIComponent(anchorId)}"]`);
+        
+        // 尝试通过标题文本匹配
+        if (!targetElement) {
+          const headings = measureRef.current.querySelectorAll('h1, h2, h3, h4, h5, h6');
+          for (const heading of headings) {
+            const text = heading.textContent?.trim() || '';
+            if (encodeURIComponent(text).replace(/%20/g, '-') === anchorId ||
+                text === decodeURIComponent(anchorId)) {
+              targetElement = heading;
+              break;
+            }
+          }
+        }
+        
+        if (targetElement) {
+          const containerTop = measureRef.current.getBoundingClientRect().top;
+          const elementTop = targetElement.getBoundingClientRect().top;
+          const targetOffset = elementTop - containerTop;
+          const newScroll = Math.max(0, Math.min(targetOffset - 20, maxScroll));
+          setScrollOffset(newScroll);
+          targetElement.classList.add('anchor-highlight');
+          setTimeout(() => targetElement.classList.remove('anchor-highlight'), 2000);
+        }
+      }
+    }
+  }, [onNoteLinkClick, maxScroll]);
+
+  // 左页偏移 = 当前滚动位置，右页偏移 = 当前滚动位置 + 一页高度
+  const leftOffset = scrollOffset;
+  const rightOffset = scrollOffset + pageHeight;
+
+  // 滚动条计算
+  const showScrollbar = maxScroll > 0;
+  const thumbHeight = contentHeight > 0 ? Math.max(40, (pageHeight / contentHeight) * pageHeight) : 0;
+  const trackAvailable = Math.max(0, pageHeight - thumbHeight);
+  const thumbTop = maxScroll > 0 ? (scrollOffset / maxScroll) * trackAvailable : 0;
+
+  return (
+    <div 
+      ref={containerRef}
+      className="flex-1 flex flex-col overflow-hidden px-3 py-3 relative group/reader"
+      onWheel={handleWheel}
+    >
+      {/* 虚拟滚动条 */}
+      {showScrollbar && (
+        <div 
+          className={cn(
+            "absolute right-1 top-3 bottom-3 w-2.5 z-50 transition-opacity duration-300",
+            // 只有在拖拽时或鼠标悬停在容器右侧区域时才显示
+            isDragging ? "opacity-100" : "opacity-0 group-hover/reader:opacity-100"
+          )}
+        >
+          {/* 轨道 (点击可跳转) */}
+          <div 
+            className="absolute inset-0 rounded-full"
+            onClick={handleTrackClick}
+          />
+          {/* 滑块 */}
+          <div
+            style={{ 
+              height: thumbHeight,
+              transform: `translateY(${thumbTop}px)`,
+              cursor: 'grab'
+            }}
+            onMouseDown={handleThumbMouseDown}
+            className={cn(
+              "w-1.5 mx-auto rounded-full transition-colors duration-200",
+              isDragging && "cursor-grabbing w-2", // 拖拽时稍微变宽
+              // 主题适配 (参考 notes-scrollbar)
+              isDark 
+                ? "bg-gradient-to-b from-[rgba(34,211,238,0.4)] to-[rgba(168,85,247,0.4)] hover:from-[rgba(34,211,238,0.6)] hover:to-[rgba(168,85,247,0.6)]" 
+                : "bg-gradient-to-b from-[#cbd5e1] to-[#94a3b8] hover:from-[#94a3b8] hover:to-[#64748b]"
+            )}
+          />
+          {/* 进度百分比指示 */}
+          <div className={cn(
+            "absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] font-medium whitespace-nowrap",
+            "opacity-0 group-hover:opacity-100 transition-opacity duration-200",
+            isDark ? "text-white/40" : "text-gray-400"
+          )}>
+            {maxScroll > 0 ? Math.round((scrollOffset / maxScroll) * 100) : 0}%
+          </div>
+        </div>
+      )}
+
+      {/* 隐藏的测量容器 */}
+      <div 
+        ref={measureRef}
+        className={getMeasureContainerStyles(isDark, editable)}
+        style={{ width: 'calc(50% - 1px)', padding: '1.5rem 2rem' }}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+
+      {/* 书本容器 */}
+      <div className={cn(
+        "flex-1 flex min-h-0 rounded-xl overflow-hidden relative",
+        "notes-reading-panel transition-colors duration-300",
+        isDark ? "theme-dark" : "theme-light"
+      )}>
+        {/* 左页 */}
+        <div 
+          className="flex-1 overflow-hidden relative"
+          onClick={handleClick}
+        >
+          <div 
+            className={getDualPageContentStyles(isDark, editable, "left")}
+            style={{ transform: `translateY(-${leftOffset}px)` }}
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        </div>
+
+        {/* 中缝分割线 */}
+        <div className={cn(
+          "w-[1px] flex-shrink-0 relative z-10",
+          isDark ? "bg-white/10 shadow-[0_0_10px_rgba(0,0,0,0.5)]" : "bg-black/10 shadow-[0_0_10px_rgba(0,0,0,0.1)]"
+        )}>
+          <div className={cn(
+            "absolute inset-y-0 -left-4 w-4 pointer-events-none",
+            isDark ? "bg-gradient-to-r from-transparent to-black/20" : "bg-gradient-to-r from-transparent to-black/[0.03]"
+          )} />
+          <div className={cn(
+            "absolute inset-y-0 -right-4 w-4 pointer-events-none",
+            isDark ? "bg-gradient-to-l from-transparent to-black/20" : "bg-gradient-to-l from-transparent to-black/[0.03]"
+          )} />
+        </div>
+
+        {/* 右页 */}
+        <div 
+          className="flex-1 overflow-hidden relative"
+          onClick={handleClick}
+        >
+          <div 
+            className={getDualPageContentStyles(isDark, editable, "right")}
+            style={{ transform: `translateY(-${rightOffset}px)` }}
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

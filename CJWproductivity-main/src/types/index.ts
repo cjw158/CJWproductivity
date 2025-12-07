@@ -121,6 +121,8 @@ export interface PlanImage {
   height: number | null;
   /** 创建时间 */
   createdAt: string;
+  /** 排序顺序 */
+  sortOrder: number;
 }
 
 export interface CreatePlanImageInput {

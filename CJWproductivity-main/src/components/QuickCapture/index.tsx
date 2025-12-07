@@ -44,6 +44,7 @@ export const QuickCapture = memo(function QuickCapture({
   onClose,
   onSaveAndClose,
   onCreated,
+  defaultDueDate,
 }: QuickCaptureProps) {
   const [state, dispatch] = useReducer(quickCaptureReducer, initialState);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -100,13 +101,14 @@ export const QuickCapture = memo(function QuickCapture({
   const config = modeConfig[state.mode];
   const Icon = config.icon;
 
-  // 打开时聚焦输入框
+  // 打开时初始化状态（使用默认日期）并聚焦输入框
   useEffect(() => {
     if (isOpen) {
+      dispatch({ type: "INIT", payload: { dueDate: defaultDueDate } });
       const timer = setTimeout(() => inputRef.current?.focus(), 50);
       return () => clearTimeout(timer);
     }
-  }, [isOpen]);
+  }, [isOpen, defaultDueDate]);
 
   // 关闭时重置状态
   useEffect(() => {

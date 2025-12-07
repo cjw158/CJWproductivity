@@ -1,5 +1,6 @@
 import { getDatabase } from "./database";
 import { logger } from "./logger";
+import { extractH1Title } from "@/utils";
 
 // ============ Types ============
 
@@ -12,6 +13,7 @@ export interface Note {
   tags: string[];     // 标签数组
   created_at: string;
   updated_at: string;
+  deleted_at?: string | null; // 软删除时间，null 表示未删除
 }
 
 export interface Folder {
@@ -35,13 +37,11 @@ export interface UpdateNoteInput {
   tags?: string[];
 }
 
-// ============ Mock Data ============
+// ============ Default Folders (fallback) ============
 
-const mockFolders: Folder[] = [
+const defaultFolders: Folder[] = [
   { id: "all", name: "全部笔记", type: "system", icon: "Archive" },
   { id: "trash", name: "最近删除", type: "system", icon: "Trash2" },
-  { id: "personal", name: "个人思考", type: "user", icon: "Folder" },
-  { id: "work", name: "工作记录", type: "user", icon: "Folder" },
 ];
 
 const mockNotes: Note[] = [
@@ -60,13 +60,12 @@ let mockNoteIdCounter = 2;
 
 // ============ Helpers ============
 
-// Extract title from content (simple HTML tag stripping)
+/**
+ * 提取笔记标题 - 使用统一的 extractH1Title 函数
+ * @deprecated 请直接使用 extractH1Title from "@/utils"
+ */
 export function extractTitle(html: string): string {
-  const div = document.createElement("div");
-  div.innerHTML = html;
-  const text = div.textContent || div.innerText || "";
-  const firstLine = text.split("\n")[0].trim();
-  return firstLine.substring(0, 50) || "无标题笔记";
+  return extractH1Title(html, "无标题笔记");
 }
 
 // Mock Database
@@ -157,18 +156,32 @@ async function getDbOrMock() {
 // ============ Operations ============
 
 export async function getFolders(): Promise<Folder[]> {
-  // Mock folders for now
-  return mockFolders;
+  try {
+    const db = await getDatabase();
+    const rows = await db.select<any[]>("SELECT * FROM folders ORDER BY type ASC, created_at ASC");
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      icon: row.icon,
+      type: row.type as "system" | "user",
+    }));
+  } catch (error) {
+    logger.error("[notes] Failed to get folders from DB, using defaults:", error);
+    return defaultFolders;
+  }
 }
 
 export async function getNotes(folderId: string = "all"): Promise<Note[]> {
   const db = await getDbOrMock();
   
   if (db === mockDb) {
-    if (folderId === "all") {
-      return mockNotes.filter(n => n.folder_id !== "trash");
+    if (folderId === "trash") {
+      return mockNotes.filter(n => n.deleted_at != null);
     }
-    return mockNotes.filter(n => n.folder_id === folderId);
+    if (folderId === "all") {
+      return mockNotes.filter(n => n.deleted_at == null);
+    }
+    return mockNotes.filter(n => n.folder_id === folderId && n.deleted_at == null);
   }
 
   // Real DB implementation
@@ -176,20 +189,27 @@ export async function getNotes(folderId: string = "all"): Promise<Note[]> {
     let sql = "SELECT * FROM notes";
     const args: unknown[] = [];
     
-    if (folderId === "all") {
-      sql += " WHERE folder_id != 'trash'";
+    if (folderId === "trash") {
+      // 回收站：显示已删除的笔记
+      sql += " WHERE deleted_at IS NOT NULL";
+      sql += " ORDER BY deleted_at DESC";
+    } else if (folderId === "all") {
+      // 全部：只显示未删除的
+      sql += " WHERE deleted_at IS NULL";
+      sql += " ORDER BY is_pinned DESC, updated_at DESC";
     } else {
-      sql += " WHERE folder_id = ?";
+      // 特定文件夹：只显示未删除的
+      sql += " WHERE folder_id = ? AND deleted_at IS NULL";
       args.push(folderId);
+      sql += " ORDER BY is_pinned DESC, updated_at DESC";
     }
-    
-    sql += " ORDER BY is_pinned DESC, updated_at DESC";
     
     const rows = await db.select<any[]>(sql, args);
     return rows.map(row => ({
       ...row,
       is_pinned: row.is_pinned === 1,
       tags: JSON.parse(row.tags || "[]"),
+      deleted_at: row.deleted_at || null,
     }));
   } catch (error) {
     logger.error("[notes] Failed to get notes:", error);
@@ -290,13 +310,139 @@ export async function updateNote(id: number, input: UpdateNoteInput): Promise<No
   throw new Error("Note not found after update");
 }
 
+/**
+ * 软删除笔记（移到回收站）
+ */
 export async function deleteNote(id: number): Promise<void> {
   const db = await getDbOrMock();
+  
+  if (db === mockDb) {
+    const note = mockNotes.find(n => n.id === id);
+    if (note) {
+      note.deleted_at = new Date().toISOString();
+    }
+    return;
+  }
+  
+  await db.execute(
+    "UPDATE notes SET deleted_at = datetime('now', 'localtime') WHERE id = ?",
+    [id]
+  );
+  logger.debug("[notes] Soft deleted note:", id);
+}
+
+/**
+ * 恢复已删除的笔记
+ */
+export async function restoreNote(id: number): Promise<void> {
+  const db = await getDbOrMock();
+  
+  if (db === mockDb) {
+    const note = mockNotes.find(n => n.id === id);
+    if (note) {
+      note.deleted_at = null;
+    }
+    return;
+  }
+  
+  await db.execute(
+    "UPDATE notes SET deleted_at = NULL WHERE id = ?",
+    [id]
+  );
+  logger.debug("[notes] Restored note:", id);
+}
+
+/**
+ * 永久删除笔记
+ */
+export async function permanentDeleteNote(id: number): Promise<void> {
+  const db = await getDbOrMock();
+  
+  if (db === mockDb) {
+    const index = mockNotes.findIndex(n => n.id === id);
+    if (index !== -1) {
+      mockNotes.splice(index, 1);
+    }
+    return;
+  }
+  
   await db.execute("DELETE FROM notes WHERE id = ?", [id]);
+  logger.debug("[notes] Permanently deleted note:", id);
+}
+
+/**
+ * 清空回收站（永久删除所有已删除的笔记）
+ */
+export async function emptyTrash(): Promise<number> {
+  const db = await getDbOrMock();
+  
+  if (db === mockDb) {
+    const count = mockNotes.filter(n => n.deleted_at != null).length;
+    mockNotes.splice(0, mockNotes.length, ...mockNotes.filter(n => n.deleted_at == null));
+    return count;
+  }
+  
+  try {
+    // 先统计数量
+    const rows = await db.select<any[]>("SELECT COUNT(*) as count FROM notes WHERE deleted_at IS NOT NULL");
+    const count = rows[0]?.count || 0;
+    
+    // 永久删除
+    await db.execute("DELETE FROM notes WHERE deleted_at IS NOT NULL");
+    logger.debug("[notes] Emptied trash, deleted:", count);
+    return count;
+  } catch (error) {
+    logger.error("[notes] Failed to empty trash:", error);
+    return 0;
+  }
+}
+
+/**
+ * 清理超过指定天数的已删除笔记
+ * @param days 保留天数，默认7天
+ */
+export async function cleanupDeletedNotes(days: number = 7): Promise<number> {
+  const db = await getDbOrMock();
+  
+  if (db === mockDb) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    const cutoff = cutoffDate.toISOString();
+    
+    const before = mockNotes.length;
+    mockNotes.splice(0, mockNotes.length, ...mockNotes.filter(n => 
+      n.deleted_at == null || n.deleted_at > cutoff
+    ));
+    return before - mockNotes.length;
+  }
+  
+  try {
+    // 先统计数量
+    const rows = await db.select<any[]>(
+      `SELECT COUNT(*) as count FROM notes 
+       WHERE deleted_at IS NOT NULL 
+       AND deleted_at < datetime('now', '-${days} days')`
+    );
+    const count = rows[0]?.count || 0;
+    
+    if (count > 0) {
+      // 删除超期笔记
+      await db.execute(
+        `DELETE FROM notes 
+         WHERE deleted_at IS NOT NULL 
+         AND deleted_at < datetime('now', '-${days} days')`
+      );
+      logger.info(`[notes] Auto-cleaned ${count} notes older than ${days} days`);
+    }
+    
+    return count;
+  } catch (error) {
+    logger.error("[notes] Failed to cleanup deleted notes:", error);
+    return 0;
+  }
 }
 
 export async function createFolder(name: string): Promise<Folder> {
-  // 生成唯一 ID
   const id = `folder_${Date.now()}`;
   const newFolder: Folder = {
     id,
@@ -304,29 +450,52 @@ export async function createFolder(name: string): Promise<Folder> {
     type: "user",
     icon: "Folder",
   };
-  mockFolders.push(newFolder);
+  
+  try {
+    const db = await getDatabase();
+    await db.execute(
+      "INSERT INTO folders (id, name, icon, type) VALUES (?, ?, ?, ?)",
+      [id, name, "Folder", "user"]
+    );
+    logger.debug("[notes] Created folder:", name);
+  } catch (error) {
+    logger.error("[notes] Failed to create folder in DB:", error);
+  }
+  
   return newFolder;
 }
 
 export async function deleteFolder(folderId: string): Promise<void> {
-  // 只能删除用户文件夹
-  const folder = mockFolders.find(f => f.id === folderId);
-  if (!folder || folder.type === "system") {
+  // 系统文件夹不可删除
+  if (folderId === "all" || folderId === "trash") {
     throw new Error("系统文件夹不可删除");
   }
   
-  // 删除文件夹内的所有笔记
-  const notesToDelete = mockNotes.filter(n => n.folder_id === folderId);
-  notesToDelete.forEach(note => {
-    const index = mockNotes.findIndex(n => n.id === note.id);
-    if (index !== -1) {
-      mockNotes.splice(index, 1);
+  try {
+    const db = await getDatabase();
+    
+    // 检查是否为用户文件夹
+    const folders = await db.select<any[]>(
+      "SELECT * FROM folders WHERE id = ? AND type = 'user'",
+      [folderId]
+    );
+    
+    if (folders.length === 0) {
+      throw new Error("系统文件夹不可删除");
     }
-  });
-  
-  // 删除文件夹
-  const folderIndex = mockFolders.findIndex(f => f.id === folderId);
-  if (folderIndex !== -1) {
-    mockFolders.splice(folderIndex, 1);
+    
+    // 将该文件夹内的笔记移到"全部"（数据保护，不删除笔记）
+    await db.execute(
+      "UPDATE notes SET folder_id = 'all', updated_at = datetime('now', 'localtime') WHERE folder_id = ?",
+      [folderId]
+    );
+    logger.debug("[notes] Moved notes from folder to 'all':", folderId);
+    
+    // 删除文件夹
+    await db.execute("DELETE FROM folders WHERE id = ?", [folderId]);
+    logger.debug("[notes] Deleted folder:", folderId);
+  } catch (error) {
+    logger.error("[notes] Failed to delete folder:", error);
+    throw error;
   }
 }

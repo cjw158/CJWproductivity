@@ -118,6 +118,25 @@ export function useDeletePlanImage() {
   });
 }
 
+/**
+ * 更新图片排序顺序
+ */
+export function useUpdatePlanImageSortOrders() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (orders: { id: number; sortOrder: number }[]) => {
+      const repo = getPlanImageRepository();
+      await repo.updateSortOrders(orders);
+      return orders;
+    },
+    onSuccess: () => {
+      // 更新列表缓存
+      queryClient.invalidateQueries({ queryKey: PLAN_IMAGES_QUERY_KEY });
+    },
+  });
+}
+
 // ============ 工具 Hooks ============
 
 /**

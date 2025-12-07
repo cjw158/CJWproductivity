@@ -85,6 +85,12 @@ export function quickCaptureReducer(
         parsedText: "",
       };
 
+    case "INIT":
+      return {
+        ...initialState,
+        dueDate: action.payload.dueDate || null,
+      };
+
     case "RESET":
       return initialState;
 

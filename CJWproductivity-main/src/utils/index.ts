@@ -22,11 +22,13 @@ export function stripHtml(html: string): string {
 
 /**
  * 从 HTML 内容中提取第一个 h1 标题作为笔记标题
- * 如果没有 h1 标题，返回"未命名笔记"
  * @param html - HTML 字符串
+ * @param fallback - 可选的默认值，默认为 "未命名笔记"
  * @returns 标题文本
  */
-export function extractH1Title(html: string): string {
+export function extractH1Title(html: string, fallback: string = "未命名笔记"): string {
+  if (!html) return fallback;
+  
   // 匹配第一个 h1 标签及其内容
   const h1Match = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
   if (h1Match && h1Match[1]) {
@@ -36,5 +38,19 @@ export function extractH1Title(html: string): string {
       return title;
     }
   }
-  return "未命名笔记";
+  
+  // 如果没有 h1，尝试从纯文本第一行提取
+  const textContent = stripHtml(html).trim();
+  if (textContent) {
+    const firstLine = textContent.split("\n")[0].trim();
+    if (firstLine && firstLine.length <= 50) {
+      return firstLine;
+    }
+    // 如果第一行太长，截取前50个字符
+    if (firstLine && firstLine.length > 50) {
+      return firstLine.substring(0, 50) + "...";
+    }
+  }
+  
+  return fallback;
 }

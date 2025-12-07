@@ -4,6 +4,46 @@
 
 ## [未发布]
 
+### 2024-12-07 - 启动动画 & 图标系统重构
+
+#### ✨ 新增
+- **极简启动动画** - Logo 由虚凝实 → 旋转 360° → 淡出消失
+  - 动画阶段：`init` → `materialize` → `spin` → `fadeout` → `done`
+  - 使用 Framer Motion 实现流畅的状态过渡
+  - 背景透明，Logo 悬浮效果
+- **Windows 透明窗口** - 使用 `window-vibrancy` 实现真正透明的 splash 窗口
+- **动态窗口图标** - 通过 Rust 在运行时加载并设置窗口图标
+  - 使用 `image` crate 加载 PNG
+  - 编译时嵌入图标 (`include_bytes!`)
+  - 为所有窗口动态设置图标
+
+#### 🎨 图标系统重构
+- **圆形透明 Logo** - 全新设计的圆形透明背景 CJW Logo
+- **多尺寸图标生成** - 自动生成 16px - 512px 全尺寸图标
+- **ICO 文件优化** - 包含 7 个尺寸（16/24/32/48/64/128/256）
+- **Windows Store 图标** - 生成所有 Square*Logo.png 图标
+- **生成脚本更新** - `scripts/generate-icons.mjs` 支持透明背景
+
+#### 🖥️ 主界面优化
+- **Header Logo** - 主界面标题添加 Logo 图标
+- **主题自适应** - Logo 在深色/浅色主题下自动调整显示效果
+- **高清显示** - 使用 512px 源图确保 Logo 在各分辨率下清晰
+
+#### 📁 新增/修改文件
+- `src/components/SplashWindow.tsx` - 重写启动动画组件
+- `src/components/Header.tsx` - 添加 Logo 图标
+- `src-tauri/src/main.rs` - 添加透明窗口和动态图标支持
+- `src-tauri/Cargo.toml` - 添加 `window-vibrancy` 依赖
+- `src-tauri/tauri.conf.json` - splash 窗口透明配置
+- `scripts/generate-icons.mjs` - 更新为圆形透明 Logo
+- `public/logo.png` - 512px 启动动画 Logo
+- `src-tauri/icons/*` - 所有图标文件更新
+
+#### 📦 依赖
+- 新增 `window-vibrancy` v0.5 (Rust) - Windows 透明窗口支持
+
+---
+
 ### 2024-12-05 - 灵动岛截图功能 & NSIS 安装器优化
 
 #### ✨ 新增

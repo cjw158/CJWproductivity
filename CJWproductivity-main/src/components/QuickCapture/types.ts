@@ -26,6 +26,7 @@ export type QuickCaptureAction =
   | { type: "SET_CONTENT"; payload: string }
   | { type: "TOGGLE_MODE" }
   | { type: "SET_DUE_DATE"; payload: string | null }
+  | { type: "INIT"; payload: { dueDate?: string | null } }
   | { type: "SET_SCHEDULED_TIME"; payload: string | null }
   | { type: "SET_DURATION"; payload: number }
   | { type: "SET_PARSED"; payload: { date: Date | null; text: string } }
@@ -42,6 +43,7 @@ export interface QuickCaptureProps {
   onClose: () => void;
   onSaveAndClose: () => void;
   onCreated?: () => void;
+  defaultDueDate?: string | null; // 默认日期（YYYY-MM-DD），从日视图传入
 }
 
 export interface ModeConfig {

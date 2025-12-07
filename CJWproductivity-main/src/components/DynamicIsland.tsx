@@ -13,7 +13,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, FileText, Plus, Zap, Send, Scissors } from "lucide-react";
+import { ChevronDown, FileText, Plus, Zap, Send, Scissors, Timer, Play, Pause, RotateCcw } from "lucide-react";
 import { formatRemaining, getTaskRemaining, stripHtml, parseScheduledTime, extractH1Title } from "@/utils";
 import { ISLAND_CONFIG } from "@/config/constants";
 import { logger } from "@/lib/logger";
@@ -130,6 +130,13 @@ export const DynamicIsland = memo(function DynamicIsland() {
   const [selectedNoteId, setSelectedNoteId] = useState<number | null>(null);
   const [now, setNow] = useState(new Date());
   const [capturedImage, setCapturedImage] = useState<string | null>(null); // 粘贴的图片 Base64
+  
+  // 番茄钟状态
+  const [pomodoroMinutes, setPomodoroMinutes] = useState(25); // 设定时长（分钟）
+  const [pomodoroRemaining, setPomodoroRemaining] = useState(0); // 剩余秒数
+  const [isPomodoroActive, setIsPomodoroActive] = useState(false); // 是否运行中
+  const [, setIsPomodoroHovered] = useState(false); // 悬停状态（保留用于未来扩展）
+  
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const queryClient = useQueryClient();
   const { theme } = useTheme();
@@ -382,6 +389,74 @@ export const DynamicIsland = memo(function DynamicIsland() {
     return () => clearInterval(timer);
   }, []);
 
+  // 番茄钟倒计时
+  useEffect(() => {
+    if (!isPomodoroActive || pomodoroRemaining <= 0) return;
+    
+    const timer = setInterval(() => {
+      setPomodoroRemaining(prev => {
+        if (prev <= 1) {
+          setIsPomodoroActive(false);
+          // 播放提示音或通知
+          try {
+            const audio = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleVJFnNzmxoFYOFOz8N62dFVZrPnpxIBfXqru4bl4X12p7+G3dV5cpO7ftXNdW6Lr3bNxW1mi6duxcFpYoOfZr25ZVp/l169tWFWd49WtbFdUnOHTq2tWUpri0alqVVGY4M+oaVRQl97NpmhTT5XdzKVnUk6U3MqjZlFNk9rJomVQTJLZyKBkT0uR2MefY05KkNbGnmJNSY/VxZ1hTEiO1MSbYEtHjdPDmmBKRozSwpleSkaL0cGYXUlFitDAl1xIRInPv5ZbR0OIzr6VWkZCh829lFlFQYbMvJNYRECFy7uSV0M/hMq6kVZCPoTJuZBVQT2DyLiPVEA8gsC3j1M/O4G/to5SPjqAvbWNUj05gLy0i1E8OIC7s4pQOzeAurKJUDo2f7mxiFQ3NYC4sIdTNjSAt6+GUjUzgLauhlE0MoC1rYVRMzGAs6yEUDIwgLKrgk8xL4CxqoFPMC6AsKmATy8tgK+of04uLICupn5OLSuArKV9TSsqgKukfE0qKYCqo3tMKSiAqaJ6TCgngKiheks=");
+            audio.volume = 0.5;
+            audio.play().catch(() => {});
+          } catch {}
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    
+    return () => clearInterval(timer);
+  }, [isPomodoroActive, pomodoroRemaining]);
+
+  // 番茄钟控制函数
+  const handlePomodoroStart = useCallback(() => {
+    if (isPomodoroActive) {
+      // 暂停
+      setIsPomodoroActive(false);
+    } else {
+      // 开始/继续
+      if (pomodoroRemaining === 0) {
+        setPomodoroRemaining(pomodoroMinutes * 60);
+      }
+      setIsPomodoroActive(true);
+    }
+  }, [isPomodoroActive, pomodoroRemaining, pomodoroMinutes]);
+
+  const handlePomodoroReset = useCallback(() => {
+    setIsPomodoroActive(false);
+    setPomodoroRemaining(0);
+  }, []);
+
+  // 滚轮调节番茄钟时长
+  const handlePomodoroWheel = useCallback((e: React.WheelEvent) => {
+    if (isPomodoroActive) return; // 运行中不允许调节
+    e.preventDefault();
+    e.stopPropagation();
+    
+    setPomodoroMinutes(prev => {
+      const delta = e.deltaY < 0 ? 1 : -1;
+      return Math.max(1, Math.min(60, prev + delta));
+    });
+  }, [isPomodoroActive]);
+
+  // 格式化番茄钟时间显示
+  const formatPomodoroTime = useCallback((seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }, []);
+
+  // 番茄钟进度百分比
+  const pomodoroProgress = useMemo(() => {
+    if (pomodoroRemaining === 0) return 0;
+    const total = pomodoroMinutes * 60;
+    return ((total - pomodoroRemaining) / total) * 100;
+  }, [pomodoroRemaining, pomodoroMinutes]);
+
   // 今日日期字符串 (YYYY-MM-DD)
   const todayStr = useMemo(() => {
     const y = now.getFullYear();
@@ -441,35 +516,45 @@ export const DynamicIsland = memo(function DynamicIsland() {
 
   // 计算收起状态的宽度
   const collapsedWidth = useMemo(() => {
+    const padding = 40;
+    const iconWidth = 22;
+    const timeWidth = 40;
+    
+    // 番茄钟运行中时的宽度计算
+    if (isPomodoroActive || pomodoroRemaining > 0) {
+      // 番茄钟固定宽度：图标 + 时间 + padding
+      const pomodoroWidth = padding + 24 + 60; // 图标24 + 时间文本60
+      
+      if (activeTasks.length > 0) {
+        // 有任务时取较大值
+        let taskWidth = padding;
+        activeTasks.forEach((task, idx) => {
+          if (idx > 0) taskWidth += 9;
+          taskWidth += iconWidth;
+          taskWidth += measureTextWidth(task.content, "600 14px " + SYSTEM_FONT);
+          if (getTaskRemaining(task, now)) taskWidth += timeWidth;
+          taskWidth += 8;
+        });
+        return Math.min(Math.max(pomodoroWidth, taskWidth, MIN_COLLAPSED_WIDTH), 800);
+      }
+      return Math.max(pomodoroWidth, MIN_COLLAPSED_WIDTH);
+    }
+    
     // 没有进行中任务且没有下一个任务，显示最小宽度
     if (activeTasks.length === 0 && !nextTask) return MIN_COLLAPSED_WIDTH;
     
-    // 基础 padding (左 16 + 右 16) + 内部 gap (8)
-    const padding = 40;
-    const iconWidth = 22; // 图标 + 间距
-    const timeWidth = 40; // 时间文本宽度预估
-    
     if (activeTasks.length > 0) {
-      // 总宽度 = 内容宽度 + 图标 + 时间 + padding
-      // 如果有多个任务，稍微增加宽度以示区别，但这里我们垂直排列或者横向排列？
-      // 原代码是横向排列，但只显示名字。
-      // 假设我们想要完整显示名字，应该取最长的一个或者总和？
-      // 原设计：activeTasks.map... flex row
-      
-      // 重新计算总宽度：
-      // 每个任务：图标 + 文字 + 时间(可选) + 分隔符(idx>0)
       let totalWidth = padding;
       activeTasks.forEach((task, idx) => {
-        if (idx > 0) totalWidth += 9; // 分隔线 + gap
+        if (idx > 0) totalWidth += 9;
         totalWidth += iconWidth;
         totalWidth += measureTextWidth(task.content, "600 14px " + SYSTEM_FONT);
         if (getTaskRemaining(task, now)) totalWidth += timeWidth;
-        totalWidth += 8; // item gap
+        totalWidth += 8;
       });
       
-      return Math.min(Math.max(totalWidth, MIN_COLLAPSED_WIDTH), 800); // 最大限制 800px
+      return Math.min(Math.max(totalWidth, MIN_COLLAPSED_WIDTH), 800);
     } else if (nextTask) {
-       // 下一个任务预告宽度
        let width = padding;
        width += measureTextWidth("即将开始:", "12px " + SYSTEM_FONT) + 8;
        width += measureTextWidth(nextTask.content, "600 13px " + SYSTEM_FONT) + 8;
@@ -478,7 +563,7 @@ export const DynamicIsland = memo(function DynamicIsland() {
     }
     
     return MIN_COLLAPSED_WIDTH;
-  }, [activeTasks, nextTask, now]);
+  }, [activeTasks, nextTask, now, isPomodoroActive, pomodoroRemaining]);
 
   // 计算捕获模式的宽度
   const captureWidth = useMemo(() => {
@@ -546,7 +631,9 @@ export const DynamicIsland = memo(function DynamicIsland() {
           height = expandedHeight;
         } else {
           width = collapsedWidth;
-          height = COLLAPSED_HEIGHT;
+          // 番茄钟运行中且有任务时显示两行
+          const hasPomodoroWithTask = (isPomodoroActive || pomodoroRemaining > 0) && activeTasks.length > 0;
+          height = hasPomodoroWithTask ? COLLAPSED_HEIGHT * 2 : COLLAPSED_HEIGHT;
         }
         
         await win.setSize(new LogicalSize(width, height));
@@ -555,7 +642,7 @@ export const DynamicIsland = memo(function DynamicIsland() {
       }
     };
     resize();
-  }, [isExpanded, collapsedWidth, expandedHeight, isCaptureMode, captureWidth, showNoteSelector, lineCount]);
+  }, [isExpanded, collapsedWidth, expandedHeight, isCaptureMode, captureWidth, showNoteSelector, lineCount, isPomodoroActive, pomodoroRemaining, activeTasks.length]);
 
   if (!isVisible) return null;
 
@@ -892,7 +979,7 @@ export const DynamicIsland = memo(function DynamicIsland() {
             </AnimatePresence>
           </motion.div>
         ) : !isExpanded ? (
-          // 收起状态 - 显示当前任务
+          // 收起状态 - 显示番茄钟和/或当前任务
           <motion.div
             key="collapsed"
             initial={{ opacity: 0 }}
@@ -903,81 +990,147 @@ export const DynamicIsland = memo(function DynamicIsland() {
               width: "100%",
               height: "100%",
               display: "flex",
+              flexDirection: (isPomodoroActive || pomodoroRemaining > 0) && activeTasks.length > 0 ? "column" : "row",
               alignItems: "center",
               justifyContent: "center",
-              gap: 12,
+              gap: (isPomodoroActive || pomodoroRemaining > 0) && activeTasks.length > 0 ? 4 : 12,
               padding: "0 16px",
             }}
           >
-            {activeTasks.length > 0 ? (
-              activeTasks.map((task, idx) => {
-                const remaining = getTaskRemaining(task, now);
-                // 计算进度：假设任务时长30分钟，如果没有设置duration
-                let progress = 0;
-                if (task.scheduled_time) {
-                   const start = parseScheduledTime(task.scheduled_time);
-                   const duration = task.duration || 30;
-                   if (start) {
-                     const totalMs = duration * 60000;
-                     const elapsed = now.getTime() - start.getTime();
-                     progress = Math.min((elapsed / totalMs) * 100, 100);
-                   }
-                }
-
-                return (
-                  <div key={task.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {idx > 0 && <div style={{ width: 1, height: 16, background: colors.border, marginRight: 8 }} />}
-                    <div style={{ position: 'relative', width: 14, height: 14 }}>
-                        <div style={{ position: 'absolute', top: -1, left: -1 }}>
-                            <CircularProgress progress={progress} size={16} color={colors.success} strokeWidth={2} />
-                        </div>
-                        <div style={{ position: 'absolute', top: 3, left: 3 }}>
-                            <PulseIndicator color={colors.success} size={8} />
-                        </div>
-                    </div>
-                    <span style={{ 
-                      color: colors.text, 
-                      fontSize: 14, 
-                      fontWeight: 600,
-                      maxWidth: "none", // 移除最大宽度限制
-                      whiteSpace: "nowrap",
-                      letterSpacing: "-0.2px",
-                    }}>
-                      {task.content}
-                    </span>
-                    {remaining && (
-                      <span style={{ 
-                        color: colors.accent, 
-                        fontSize: 14, 
-                        fontWeight: 700,
-                        fontVariantNumeric: "tabular-nums",
-                        letterSpacing: "-0.3px",
-                      }}>
-                        {formatRemaining(remaining)}
-                      </span>
-                    )}
-                  </div>
-                );
-              })
-            ) : nextTask ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.8 }}>
-                <span style={{ color: colors.textMuted, fontSize: 12 }}>{t("island.upcomingTask")}</span>
-                <span style={{ 
-                    color: colors.text, 
-                    fontSize: 13, 
-                    fontWeight: 600,
-                    maxWidth: "none", // 移除最大宽度限制
-                    whiteSpace: "nowrap"
-                  }}>
-                    {nextTask.content}
-                  </span>
-                  <span style={{ color: colors.accent, fontSize: 12, fontWeight: 500 }}>
-                    {nextTask.scheduled_time}
-                  </span>
+            {/* 番茄钟显示 */}
+            {(isPomodoroActive || pomodoroRemaining > 0) && (
+              <div style={{ 
+                display: "flex", 
+                alignItems: "center", 
+                gap: 8,
+                height: activeTasks.length > 0 ? COLLAPSED_HEIGHT - 4 : "100%",
+              }}>
+                {/* 番茄钟进度环 */}
+                <div style={{ position: "relative", width: 20, height: 20 }}>
+                  <CircularProgress 
+                    progress={pomodoroProgress} 
+                    size={20} 
+                    color={isDark ? "#f97316" : "#ea580c"} 
+                    strokeWidth={2.5} 
+                  />
+                  {isPomodoroActive && (
+                    <motion.div
+                      animate={{ scale: [1, 1.2, 1] }}
+                      transition={{ duration: 1, repeat: Infinity }}
+                      style={{
+                        position: "absolute",
+                        top: 6,
+                        left: 6,
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: isDark ? "#f97316" : "#ea580c",
+                      }}
+                    />
+                  )}
+                </div>
+                
+                {/* 时间显示 */}
+                <span style={{
+                  color: isDark ? "#f97316" : "#ea580c",
+                  fontSize: 16,
+                  fontWeight: 700,
+                  fontVariantNumeric: "tabular-nums",
+                  letterSpacing: "-0.5px",
+                }}>
+                  {formatPomodoroTime(pomodoroRemaining > 0 ? pomodoroRemaining : pomodoroMinutes * 60)}
+                </span>
+                
+                {/* 暂停指示 */}
+                {!isPomodoroActive && pomodoroRemaining > 0 && (
+                  <motion.div
+                    animate={{ opacity: [1, 0.3, 1] }}
+                    transition={{ duration: 1, repeat: Infinity }}
+                  >
+                    <Pause size={12} color={isDark ? "#f97316" : "#ea580c"} />
+                  </motion.div>
+                )}
               </div>
-            ) : (
-              <span style={{ color: colors.textMuted, fontSize: 14, fontWeight: 400 }}>{t("island.noActiveTask")}</span>
             )}
+            
+            {/* 任务显示（原有逻辑） */}
+            {!(isPomodoroActive || pomodoroRemaining > 0) || activeTasks.length > 0 ? (
+              activeTasks.length > 0 ? (
+                <div style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  gap: 8,
+                  height: (isPomodoroActive || pomodoroRemaining > 0) ? COLLAPSED_HEIGHT - 4 : "100%",
+                }}>
+                  {activeTasks.map((task, idx) => {
+                    const remaining = getTaskRemaining(task, now);
+                    let progress = 0;
+                    if (task.scheduled_time) {
+                       const start = parseScheduledTime(task.scheduled_time);
+                       const duration = task.duration || 30;
+                       if (start) {
+                         const totalMs = duration * 60000;
+                         const elapsed = now.getTime() - start.getTime();
+                         progress = Math.min((elapsed / totalMs) * 100, 100);
+                       }
+                    }
+
+                    return (
+                      <div key={task.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {idx > 0 && <div style={{ width: 1, height: 16, background: colors.border, marginRight: 8 }} />}
+                        <div style={{ position: 'relative', width: 14, height: 14 }}>
+                            <div style={{ position: 'absolute', top: -1, left: -1 }}>
+                                <CircularProgress progress={progress} size={16} color={colors.success} strokeWidth={2} />
+                            </div>
+                            <div style={{ position: 'absolute', top: 3, left: 3 }}>
+                                <PulseIndicator color={colors.success} size={8} />
+                            </div>
+                        </div>
+                        <span style={{ 
+                          color: colors.text, 
+                          fontSize: 14, 
+                          fontWeight: 600,
+                          maxWidth: "none",
+                          whiteSpace: "nowrap",
+                          letterSpacing: "-0.2px",
+                        }}>
+                          {task.content}
+                        </span>
+                        {remaining && (
+                          <span style={{ 
+                            color: colors.accent, 
+                            fontSize: 14, 
+                            fontWeight: 700,
+                            fontVariantNumeric: "tabular-nums",
+                            letterSpacing: "-0.3px",
+                          }}>
+                            {formatRemaining(remaining)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : nextTask && !(isPomodoroActive || pomodoroRemaining > 0) ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.8 }}>
+                  <span style={{ color: colors.textMuted, fontSize: 12 }}>{t("island.upcomingTask")}</span>
+                  <span style={{ 
+                      color: colors.text, 
+                      fontSize: 13, 
+                      fontWeight: 600,
+                      maxWidth: "none",
+                      whiteSpace: "nowrap"
+                    }}>
+                      {nextTask.content}
+                    </span>
+                    <span style={{ color: colors.accent, fontSize: 12, fontWeight: 500 }}>
+                      {nextTask.scheduled_time}
+                    </span>
+                </div>
+              ) : !(isPomodoroActive || pomodoroRemaining > 0) ? (
+                <span style={{ color: colors.textMuted, fontSize: 14, fontWeight: 400 }}>{t("island.noActiveTask")}</span>
+              ) : null
+            ) : null}
           </motion.div>
         ) : (
           // 展开状态 - 今日任务列表
@@ -1036,6 +1189,110 @@ export const DynamicIsland = memo(function DynamicIsland() {
                 >
                   <Zap size={12} color="#FBBF24" />
                 </button>
+                
+                {/* 番茄钟按钮组 */}
+                <div 
+                  style={{ 
+                    display: "flex", 
+                    alignItems: "center", 
+                    gap: 4,
+                    padding: "2px 6px",
+                    borderRadius: 8,
+                    background: isPomodoroActive || pomodoroRemaining > 0 
+                      ? (isDark ? "rgba(249,115,22,0.15)" : "rgba(234,88,12,0.1)")
+                      : colors.cardBg,
+                    border: isPomodoroActive 
+                      ? `1px solid ${isDark ? "#f97316" : "#ea580c"}` 
+                      : "1px solid transparent",
+                    transition: "all 0.2s",
+                  }}
+                  onMouseEnter={() => setIsPomodoroHovered(true)}
+                  onMouseLeave={() => setIsPomodoroHovered(false)}
+                  onWheel={handlePomodoroWheel}
+                >
+                  {/* 时长显示/调节 */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      cursor: isPomodoroActive ? "default" : "ns-resize",
+                      userSelect: "none",
+                    }}
+                    title={isPomodoroActive ? undefined : "滚轮调节时长"}
+                  >
+                    <Timer size={12} color={isDark ? "#f97316" : "#ea580c"} />
+                    <span style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: isDark ? "#f97316" : "#ea580c",
+                      fontVariantNumeric: "tabular-nums",
+                      minWidth: 32,
+                      textAlign: "center",
+                    }}>
+                      {pomodoroRemaining > 0 
+                        ? formatPomodoroTime(pomodoroRemaining)
+                        : `${pomodoroMinutes}分`
+                      }
+                    </span>
+                  </div>
+                  
+                  {/* 播放/暂停按钮 */}
+                  <button
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handlePomodoroStart();
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 18,
+                      height: 18,
+                      borderRadius: 4,
+                      background: isPomodoroActive 
+                        ? (isDark ? "#f97316" : "#ea580c")
+                        : "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                      transition: "all 0.2s",
+                    }}
+                  >
+                    {isPomodoroActive ? (
+                      <Pause size={10} color="#fff" />
+                    ) : (
+                      <Play size={10} color={isDark ? "#f97316" : "#ea580c"} style={{ marginLeft: 1 }} />
+                    )}
+                  </button>
+                  
+                  {/* 重置按钮（仅在有剩余时间时显示） */}
+                  {pomodoroRemaining > 0 && (
+                    <button
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePomodoroReset();
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 18,
+                        height: 18,
+                        borderRadius: 4,
+                        background: "transparent",
+                        border: "none",
+                        cursor: "pointer",
+                        opacity: 0.6,
+                        transition: "all 0.2s",
+                      }}
+                      title="重置"
+                    >
+                      <RotateCcw size={10} color={isDark ? "#f97316" : "#ea580c"} />
+                    </button>
+                  )}
+                </div>
               </div>
               <span style={{ 
                 color: colors.accent, 
