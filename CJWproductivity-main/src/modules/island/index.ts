@@ -18,11 +18,9 @@ export * from "./hooks";
 // 工具函数
 export * from "./utils";
 
-// 组件 - 按需导出
-// export { DynamicIsland } from "./components/DynamicIsland";
-// export { IslandCollapsed } from "./components/IslandCollapsed";
-// export { IslandExpanded } from "./components/IslandExpanded";
-// export { IslandCapture } from "./components/IslandCapture";
+// 组件
+export { DynamicIsland } from "./components/DynamicIsland";
+export * from "./components";
 
-// 图标组件
-export * from "./components/icons";
+// 服务
+export * from "./services/islandWindow";
