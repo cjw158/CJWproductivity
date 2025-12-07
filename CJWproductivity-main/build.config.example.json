@@ -1,0 +1,33 @@
+{
+  "$schema": "./build.config.schema.json",
+  "name": "CJWproductivity Full Edition",
+  "version": "1.0.0",
+  "modules": {
+    "calendar": true,
+    "notes": true,
+    "plans": true,
+    "island": true,
+    "focus": true,
+    "wallpaper": true,
+    "ai": false,
+    "novel": false,
+    "research": false
+  },
+  "skins": {
+    "themes": ["dark-neon", "light-apple"],
+    "island": ["cyberpunk", "minimal"],
+    "effects": ["particles", "waves"],
+    "sounds": ["default"]
+  },
+  "license": {
+    "type": "full",
+    "userId": "",
+    "userName": "",
+    "modules": ["*"]
+  },
+  "build": {
+    "target": "windows",
+    "minify": true,
+    "sourcemap": false
+  }
+}
