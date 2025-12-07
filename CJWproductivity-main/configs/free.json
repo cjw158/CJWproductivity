@@ -1,0 +1,21 @@
+{
+  "name": "CJWproductivity Free Edition",
+  "version": "1.0.0",
+  "modules": {
+    "calendar": true,
+    "notes": true,
+    "plans": false,
+    "island": false,
+    "focus": false,
+    "wallpaper": false
+  },
+  "skins": {
+    "themes": ["light-apple"],
+    "island": [],
+    "effects": [],
+    "sounds": []
+  },
+  "license": {
+    "type": "free"
+  }
+}

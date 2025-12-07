@@ -1,0 +1,21 @@
+{
+  "name": "CJWproductivity Full Edition",
+  "version": "1.0.0",
+  "modules": {
+    "calendar": true,
+    "notes": true,
+    "plans": true,
+    "island": true,
+    "focus": true,
+    "wallpaper": true
+  },
+  "skins": {
+    "themes": ["dark-neon", "light-apple"],
+    "island": ["cyberpunk", "minimal", "sakura"],
+    "effects": ["nebula", "matrix", "particles", "waves"],
+    "sounds": ["default", "zen", "focus"]
+  },
+  "license": {
+    "type": "full"
+  }
+}
